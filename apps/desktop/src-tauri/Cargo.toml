@@ -1,0 +1,19 @@
+[package]
+name = "localopenrouter"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+build = "build.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+libc.workspace = true
+localopenrouter-core = { path = "../../../crates/localopenrouter-core" }
+serde.workspace = true
+tauri.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Allow the main LocalOpenRouter window to access desktop IPC commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
