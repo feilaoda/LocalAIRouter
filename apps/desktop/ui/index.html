@@ -1,52 +1,122 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LocalOpenRouter</title>
+    <title>LocalAIRouter</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="stage-glow"></div>
     <main class="app-shell">
       <nav class="tabbar" aria-label="Workspace tabs">
-        <button class="tab-button is-active" type="button" data-tab="dashboard">Dashboard</button>
-        <button class="tab-button" type="button" data-tab="providers">Providers</button>
-        <button class="tab-button" type="button" data-tab="accounts">Accounts</button>
-        <button class="tab-button" type="button" data-tab="routes">Routes</button>
-        <button class="tab-button" type="button" data-tab="monitor">Monitor</button>
-        <button class="tab-button" type="button" data-tab="logs">Logs</button>
-        <button class="tab-button" type="button" data-tab="onboarding">Onboarding</button>
+        <button
+          class="tab-button is-active"
+          type="button"
+          data-tab="dashboard"
+          data-i18n="Dashboard"
+        >
+          Dashboard
+        </button>
+        <button
+          class="tab-button"
+          type="button"
+          data-tab="stats"
+          data-i18n="Stats"
+        >
+          Stats
+        </button>
+        <button
+          class="tab-button"
+          type="button"
+          data-tab="providers"
+          data-i18n="Providers"
+        >
+          Providers
+        </button>
+        <button
+          class="tab-button"
+          type="button"
+          data-tab="accounts"
+          data-i18n="Accounts"
+        >
+          Accounts
+        </button>
+        <button
+          class="tab-button"
+          type="button"
+          data-tab="routes"
+          data-i18n="Routes"
+        >
+          Routes
+        </button>
+        <button
+          class="tab-button"
+          type="button"
+          data-tab="monitor"
+          data-i18n="Logs"
+        >
+          Logs
+        </button>
+        <button
+          class="tab-button"
+          type="button"
+          data-tab="onboarding"
+          data-i18n="Onboarding"
+        >
+          Docs
+        </button>
+        <button
+          class="tab-button"
+          type="button"
+          data-tab="settings"
+          data-i18n="Settings"
+        >
+          Settings
+        </button>
+        <div class="tabbar-spacer"></div>
+        <select id="locale-select" class="locale-select" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="zh-CN">中文</option>
+        </select>
       </nav>
 
       <section class="tab-panel is-active" data-panel="dashboard">
         <header class="panel topbar">
           <div class="brand-block">
-            <div class="brand-mark" aria-hidden="true">LOR</div>
+            <div class="brand-mark" aria-hidden="true">LAIR</div>
             <div class="brand-copy">
-              <p class="eyebrow">Local AI Proxy Router</p>
               <div class="brand-row">
-                <h1 class="app-title">LocalOpenRouter</h1>
-                <div class="status-chip" id="daemon-chip" data-tone="idle">Checking daemon</div>
+                <h1 class="app-title">Local AI Router</h1>
+                <div class="status-chip" id="daemon-chip" data-tone="idle">
+                  Checking daemon
+                </div>
               </div>
               <div class="meta-strip">
-                <div class="meta-pill">Vault <strong id="vault-state">Unknown</strong></div>
-                <div class="meta-pill">Port <strong id="daemon-port">--</strong></div>
+                <div class="meta-pill">
+                  Vault <strong id="vault-state">Unknown</strong>
+                </div>
+                <div class="meta-pill">
+                  Port <strong id="daemon-port">--</strong>
+                </div>
                 <div class="details-anchor">
                   <button
                     class="icon-button"
                     id="details-button"
                     type="button"
                     aria-label="Show daemon details"
+                    data-i18n-aria-label="Show daemon details"
                     aria-expanded="false"
                   >
                     i
                   </button>
                   <div class="details-popover" id="details-panel" hidden>
-                    <p class="details-title">Daemon Details</p>
+                    <p class="details-title" data-i18n="Daemon Details">
+                      Daemon Details
+                    </p>
                     <dl class="details-list">
                       <div>
-                        <dt>Status</dt>
+                        <dt data-i18n="Status">Status</dt>
                         <dd id="detail-status">Unavailable</dd>
                       </div>
                       <div>
@@ -54,23 +124,23 @@
                         <dd id="detail-pid">Unavailable</dd>
                       </div>
                       <div>
-                        <dt>Database</dt>
+                        <dt data-i18n="Database">Database</dt>
                         <dd id="db-path">Unavailable</dd>
                       </div>
                       <div>
-                        <dt>Started</dt>
+                        <dt data-i18n="Started">Started</dt>
                         <dd id="started-at">Unavailable</dd>
                       </div>
                       <div>
-                        <dt>Log File</dt>
+                        <dt data-i18n="Log File">Log File</dt>
                         <dd id="daemon-log-path">Unavailable</dd>
                       </div>
                       <div>
-                        <dt>Last Exit</dt>
+                        <dt data-i18n="Last Exit">Last Exit</dt>
                         <dd id="daemon-last-exit">Unavailable</dd>
                       </div>
                       <div>
-                        <dt>Last Error</dt>
+                        <dt data-i18n="Last Error">Last Error</dt>
                         <dd id="daemon-last-error">Unavailable</dd>
                       </div>
                     </dl>
@@ -82,12 +152,47 @@
 
           <div class="topbar-actions">
             <div class="daemon-actions">
-              <button class="ghost" id="start-daemon-button" type="button">Start</button>
-              <button class="ghost" id="stop-daemon-button" type="button">Stop</button>
-              <button class="ghost" id="restart-daemon-button" type="button">Restart</button>
-              <button class="ghost" id="open-daemon-log-button" type="button">Daemon Log</button>
+              <button
+                class="ghost"
+                id="start-daemon-button"
+                type="button"
+                data-i18n="Start"
+              >
+                Start
+              </button>
+              <button
+                class="ghost"
+                id="stop-daemon-button"
+                type="button"
+                data-i18n="Stop"
+              >
+                Stop
+              </button>
+              <button
+                class="ghost"
+                id="restart-daemon-button"
+                type="button"
+                data-i18n="Restart"
+              >
+                Restart
+              </button>
+              <button
+                class="ghost"
+                id="open-daemon-log-button"
+                type="button"
+                data-i18n="Daemon Log"
+              >
+                Daemon Log
+              </button>
             </div>
-            <button id="vault-action-button" type="button" data-mode="unlock">Unlock Vault</button>
+            <button
+              id="vault-action-button"
+              type="button"
+              data-mode="unlock"
+              data-i18n="Unlock Vault"
+            >
+              Unlock Vault
+            </button>
           </div>
         </header>
 
@@ -97,31 +202,69 @@
           <article class="panel spotlight">
             <div class="panel-head">
               <div>
-                <p class="panel-kicker">Coverage</p>
-                <h2>Routing Snapshot</h2>
+                <p class="panel-kicker" data-i18n="Coverage">Coverage</p>
+                <h2 data-i18n="Routing Snapshot">Routing Snapshot</h2>
               </div>
             </div>
             <div class="summary-list" id="route-summary-list"></div>
           </article>
 
-          <article class="panel compact">
+          <article class="panel stats-panel">
             <div class="panel-head">
               <div>
-                <p class="panel-kicker">Requests</p>
-                <h2>Recent Activity</h2>
+                <p class="panel-kicker" data-i18n="Today">Today</p>
+                <h2 data-i18n="Today's Activity">Today's Activity</h2>
               </div>
             </div>
             <div class="activity-list" id="recent-activity-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="tab-panel" data-panel="stats">
+        <div class="stats-summary-grid" id="stats-summary-list"></div>
+
+        <div class="stats-layout">
+          <article class="panel stats-panel">
+            <div class="panel-head">
+              <div>
+                <p class="panel-kicker" data-i18n="Last 30 Days">
+                  Last 30 Days
+                </p>
+                <h2 data-i18n="Daily Calls">Daily Calls</h2>
+                <p
+                  class="panel-copy"
+                  data-i18n="Grouped by your desktop local day. Restarting the app does not reset these counts."
+                >
+                  Grouped by your desktop local day. Restarting the app does not
+                  reset these counts.
+                </p>
+              </div>
+              <div class="panel-actions">
+                <button id="refresh-stats" type="button" data-i18n="Refresh">
+                  Refresh
+                </button>
+              </div>
+            </div>
+            <div class="stats-chart" id="stats-requests-chart"></div>
           </article>
 
           <article class="panel compact">
             <div class="panel-head">
               <div>
-                <p class="panel-kicker">Runtime</p>
-                <h2>Health Snapshot</h2>
+                <p class="panel-kicker" data-i18n="Last 30 Days">
+                  Last 30 Days
+                </p>
+                <h2 data-i18n="Daily Tokens">Daily Tokens</h2>
+                <p
+                  class="panel-copy"
+                  data-i18n="Only persisted effective token usage is counted here."
+                >
+                  Only persisted effective token usage is counted here.
+                </p>
               </div>
             </div>
-            <dl class="detail-grid" id="dashboard-health-list"></dl>
+            <div class="stats-chart" id="stats-tokens-chart"></div>
           </article>
         </div>
       </section>
@@ -130,15 +273,24 @@
         <article class="panel list-panel">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">Registry</p>
-              <h2>Provider Catalog</h2>
-              <p class="panel-copy">
-                Built-ins can be tuned in place. Custom providers can be edited or removed once
-                no accounts and routes depend on them.
+              <!--<p class="panel-kicker" data-i18n="Registry">Registry</p>-->
+              <h2 data-i18n="Provider Catalog">Provider Catalog</h2>
+              <p
+                class="panel-copy"
+                data-i18n="Built-ins can be tuned in place. Custom providers can be edited or removed once no accounts and routes depend on them."
+              >
+                Built-ins can be tuned in place. Custom providers can be edited
+                or removed once no accounts and routes depend on them.
               </p>
             </div>
             <div class="panel-actions">
-              <button id="open-provider-dialog" type="button">New Provider</button>
+              <button
+                id="open-provider-dialog"
+                type="button"
+                data-i18n="New Provider"
+              >
+                New Provider
+              </button>
             </div>
           </div>
           <div class="data-list" id="providers-list"></div>
@@ -149,15 +301,24 @@
         <article class="panel list-panel">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">Vault Contents</p>
-              <h2>Account Pool</h2>
-              <p class="panel-copy">
-                Each account belongs to one provider. Disable accounts to keep them available for
-                audit without letting routes hit them.
+              <!--<p class="panel-kicker" data-i18n="Vault Contents">Vault Contents</p>-->
+              <h2 data-i18n="Account Pool">Account Pool</h2>
+              <p
+                class="panel-copy"
+                data-i18n="Each account belongs to one provider. Disable accounts to keep them available for audit without letting routes hit them."
+              >
+                Each account belongs to one provider. Disable accounts to keep
+                them available for audit without letting routes hit them.
               </p>
             </div>
             <div class="panel-actions">
-              <button id="open-account-dialog" type="button">New Account</button>
+              <button
+                id="open-account-dialog"
+                type="button"
+                data-i18n="New Account"
+              >
+                New Account
+              </button>
             </div>
           </div>
           <div class="filter-strip" id="accounts-provider-tabs"></div>
@@ -169,16 +330,32 @@
         <article class="panel list-panel">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">Bindings</p>
-              <h2>Active Routes</h2>
-              <p class="panel-copy">
-                Default rules appear alongside model-prefix overrides. Overrides always win when
-                a request model matches the prefix.
+              <!--<p class="panel-kicker" data-i18n="Bindings">Bindings</p>-->
+              <h2 data-i18n="Active Routes">Active Routes</h2>
+              <p
+                class="panel-copy"
+                data-i18n="Default rules appear alongside model-prefix overrides. Overrides always win when a request model matches the prefix."
+              >
+                Default rules appear alongside model-prefix overrides. Overrides
+                always win when a request model matches the prefix.
               </p>
             </div>
             <div class="panel-actions">
-              <button id="open-route-dialog" type="button">New Route</button>
-              <button class="ghost" id="refresh-routes" type="button">Reload</button>
+              <button
+                id="open-route-dialog"
+                type="button"
+                data-i18n="New Route"
+              >
+                New Route
+              </button>
+              <button
+                class="ghost"
+                id="refresh-routes"
+                type="button"
+                data-i18n="Reload"
+              >
+                Reload
+              </button>
             </div>
           </div>
           <div class="data-list" id="routes-list"></div>
@@ -189,84 +366,69 @@
         <article class="panel monitor-panel">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">Live Feed</p>
-              <h2>Request Monitor</h2>
-              <p class="panel-copy">
-                In-memory only. This view auto-refreshes while open and shows compact request /
-                response summaries without writing extra history.
+              <!--<p class="panel-kicker" data-i18n="Logs">Logs</p>-->
+              <h2 data-i18n="Live Logs">Live Logs</h2>
+              <p
+                class="panel-copy"
+                data-i18n="In-memory tail view for current traffic. Full sanitized request logs still persist to daily JSONL files under the configured log directory. Use Open Log Root for the archived files."
+              >
+                In-memory tail view for current traffic. Full sanitized request
+                logs still persist to daily JSONL files under the configured log
+                directory. Use Open Log Root for the archived files.
               </p>
             </div>
-            <button class="ghost" id="refresh-monitor" type="button">Reload</button>
+            <div class="panel-actions">
+              <button
+                class="ghost"
+                id="open-logs-root"
+                type="button"
+                data-i18n="Open Log Root"
+              >
+                Open Log Root
+              </button>
+              <button
+                class="ghost"
+                id="refresh-monitor"
+                type="button"
+                data-i18n="Reload"
+              >
+                Reload
+              </button>
+            </div>
           </div>
 
           <form id="monitor-filter-form" class="filters">
             <label class="field">
-              <span>Provider</span>
+              <span data-i18n="Provider">Provider</span>
               <select id="monitor-provider">
-                <option value="">All</option>
+                <option value="" data-i18n="All">All</option>
               </select>
             </label>
 
             <label class="field">
-              <span>Account</span>
+              <span data-i18n="Account">Account</span>
               <select id="monitor-account">
-                <option value="">All</option>
+                <option value="" data-i18n="All">All</option>
               </select>
             </label>
 
             <label class="field">
-              <span>Limit</span>
-              <input id="monitor-limit" type="number" min="1" max="200" value="60" />
+              <span data-i18n="Limit">Limit</span>
+              <input
+                id="monitor-limit"
+                type="number"
+                min="1"
+                max="200"
+                value="60"
+              />
             </label>
 
-            <button type="submit">Apply Filters</button>
+            <button type="submit" data-i18n="Apply Filters">
+              Apply Filters
+            </button>
           </form>
 
           <div class="monitor-list" id="monitor-list"></div>
-        </article>
-      </section>
-
-      <section class="tab-panel" data-panel="logs">
-        <article class="panel log-panel">
-          <div class="panel-head">
-            <div>
-              <p class="panel-kicker">Audit Trail</p>
-              <h2>Request Logs</h2>
-              <p class="panel-copy">
-                SQLite only stores the query index. Full sanitized request and response payloads
-                are appended to daily <code>logs/YYYY-MM-DD.jsonl</code> files.
-              </p>
-            </div>
-            <div class="panel-actions">
-              <button class="ghost" id="open-logs-root" type="button">Open Log Root</button>
-              <button class="ghost" id="refresh-logs" type="button">Reload</button>
-            </div>
-          </div>
-
-          <form id="log-filter-form" class="filters">
-            <label class="field">
-              <span>Provider</span>
-              <select id="log-provider">
-                <option value="">All</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Account</span>
-              <select id="log-account">
-                <option value="">All</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Limit</span>
-              <input id="log-limit" type="number" min="1" max="200" value="50" />
-            </label>
-
-            <button type="submit">Apply Filters</button>
-          </form>
-
-          <div class="log-list" id="logs-list"></div>
         </article>
       </section>
 
@@ -274,19 +436,183 @@
         <article class="panel">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">Client Setup</p>
-              <h2>Onboarding Guides</h2>
-              <p class="panel-copy">
-                Generate localhost instructions for built-in and custom providers. Codex and
-                Claude Code presets follow provider protocol compatibility; Generic HTTP providers
-                such as Gemini or custom upstreams stay available through manual cURL entrypoints.
+              <!--<p class="panel-kicker" data-i18n="Client Setup">Client Setup</p>-->
+              <h2 data-i18n="Onboarding Guides">Docs</h2>
+              <p
+                class="panel-copy"
+                data-i18n="Generate localhost instructions for built-in and custom providers. Codex and Claude Code presets follow provider protocol compatibility, while every provider still exposes a manual cURL entrypoint."
+              >
+                Generate localhost instructions for built-in and custom
+                providers. Codex and Claude Code presets follow provider
+                protocol compatibility, while every provider still exposes a
+                manual cURL entrypoint.
               </p>
             </div>
-            <button class="ghost" id="refresh-onboarding" type="button">Refresh</button>
+            <button
+              class="ghost"
+              id="refresh-onboarding"
+              type="button"
+              data-i18n="Refresh"
+            >
+              Refresh
+            </button>
           </div>
           <div class="filter-strip" id="onboarding-target-tabs"></div>
           <div class="filter-strip" id="onboarding-provider-tabs"></div>
           <div class="guide-grid" id="onboarding-list"></div>
+        </article>
+      </section>
+
+      <section class="tab-panel" data-panel="settings">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <h2 data-i18n="Runtime Settings">Runtime Settings</h2>
+              <p
+                class="panel-copy"
+                data-i18n="Update the local daemon listening port, live log buffer, log retention window, and traffic log directory here. Saving settings restarts the daemon when it is running."
+              >
+                Update the local daemon listening port, live log buffer, log
+                retention window, and traffic log directory here. Saving
+                settings restarts the daemon when it is running.
+              </p>
+            </div>
+            <div class="panel-actions">
+              <button
+                class="ghost"
+                id="open-settings-logs-dir"
+                type="button"
+                data-i18n="Open Logs Directory"
+              >
+                Open Logs Directory
+              </button>
+            </div>
+          </div>
+
+          <form id="settings-form" class="dialog-form">
+            <div class="split-fields">
+              <label class="field">
+                <span data-i18n="Listening Port">Listening Port</span>
+                <input
+                  id="settings-daemon-port"
+                  type="number"
+                  min="1"
+                  max="65535"
+                  inputmode="numeric"
+                />
+              </label>
+
+              <label class="field">
+                <span data-i18n="Live Log Buffer">Live Log Buffer</span>
+                <input
+                  id="settings-monitor-buffer"
+                  type="number"
+                  min="1"
+                  max="5000"
+                  inputmode="numeric"
+                />
+              </label>
+            </div>
+
+            <label class="field">
+              <span data-i18n="Traffic Logs Directory"
+                >Traffic Logs Directory</span
+              >
+              <div class="field-action-row">
+                <input
+                  id="settings-logs-dir"
+                  type="text"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck="false"
+                />
+                <button
+                  class="ghost"
+                  id="settings-pick-logs-dir"
+                  type="button"
+                  data-i18n="Browse"
+                >
+                  Browse
+                </button>
+              </div>
+            </label>
+
+            <div class="split-fields">
+              <label class="field">
+                <span data-i18n="Log Retention Days">Log Retention Days</span>
+                <input
+                  id="settings-log-retention-days"
+                  type="number"
+                  min="1"
+                  max="3650"
+                  inputmode="numeric"
+                />
+              </label>
+
+              <label class="field">
+                <span data-i18n="Data Root">Data Root</span>
+                <input id="settings-data-root" type="text" readonly />
+              </label>
+            </div>
+
+            <label class="field">
+              <span data-i18n="Database Path">Database Path</span>
+              <input id="settings-database-path" type="text" readonly />
+            </label>
+
+            <p
+              class="compact-note"
+              id="settings-default-logs-dir"
+              data-i18n="Default logs directory will appear here."
+            >
+              Default logs directory will appear here.
+            </p>
+
+            <div class="maintenance-block">
+              <p class="panel-kicker" data-i18n="Temporary Maintenance">
+                Temporary Maintenance
+              </p>
+              <p
+                class="compact-note"
+                data-i18n="Rebuild historical token totals from archived daily JSONL logs. Use this only to repair older stats after the token calculation logic changed."
+              >
+                Rebuild historical token totals from archived daily JSONL logs.
+                Use this only to repair older stats after the token calculation
+                logic changed.
+              </p>
+              <p
+                class="compact-note"
+                id="rebuild-token-status"
+                hidden
+              ></p>
+            </div>
+
+            <div class="panel-actions">
+              <button
+                class="ghost"
+                id="rebuild-token-stats"
+                type="button"
+                data-i18n="Rebuild Token Stats"
+              >
+                Rebuild Token Stats
+              </button>
+              <button
+                class="ghost"
+                id="settings-use-default-logs"
+                type="button"
+                data-i18n="Use Default Logs Directory"
+              >
+                Use Default Logs Directory
+              </button>
+              <button
+                id="settings-submit"
+                type="submit"
+                data-i18n="Save Settings"
+              >
+                Save Settings
+              </button>
+            </div>
+          </form>
         </article>
       </section>
     </main>
@@ -295,10 +621,11 @@
       <div class="vault-dialog-card">
         <div class="panel-head dialog-head">
           <div>
-            <p class="panel-kicker">Control Plane</p>
+            <p class="panel-kicker" data-i18n="Control Plane">Control Plane</p>
             <h2 id="vault-dialog-title">Unlock Vault</h2>
             <p class="panel-copy" id="vault-dialog-copy">
-              Enter the master password to unlock encrypted credentials for this local session.
+              Enter the master password to unlock encrypted credentials for this
+              local session.
             </p>
           </div>
           <button
@@ -306,6 +633,7 @@
             id="close-vault-dialog"
             type="button"
             aria-label="Close vault dialog"
+            data-i18n-aria-label="Close vault dialog"
           >
             x
           </button>
@@ -313,16 +641,19 @@
 
         <form id="unlock-form" class="dialog-form">
           <label class="field">
-            <span>Master Password</span>
+            <span data-i18n="Master Password">Master Password</span>
             <input
               id="master-password"
               type="password"
               autocomplete="current-password"
               placeholder="Unlock or initialize the local vault"
+              data-i18n-placeholder="Unlock or initialize the local vault"
             />
           </label>
           <div class="form-actions">
-            <button id="unlock-submit" type="submit">Unlock</button>
+            <button id="unlock-submit" type="submit" data-i18n="Unlock">
+              Unlock
+            </button>
           </div>
         </form>
       </div>
@@ -332,11 +663,13 @@
       <div class="vault-dialog-card">
         <div class="panel-head dialog-head">
           <div>
-            <p class="panel-kicker">Upstream Registry</p>
+            <p class="panel-kicker" data-i18n="Upstream Registry">
+              Upstream Registry
+            </p>
             <h2 id="provider-form-title">New Provider</h2>
             <p class="panel-copy" id="provider-form-copy">
-              Define a built-in override or register a custom upstream with its own proxy path,
-              auth header, and protocol shape.
+              Define a built-in override or register a custom upstream with its
+              own proxy path, auth header, and protocol shape.
             </p>
           </div>
           <button
@@ -344,49 +677,72 @@
             id="close-provider-dialog"
             type="button"
             aria-label="Close provider dialog"
+            data-i18n-aria-label="Close provider dialog"
           >
             x
           </button>
         </div>
         <form id="provider-form" class="dialog-form">
           <input id="provider-slug" type="hidden" />
+          <p
+            class="form-error"
+            id="provider-form-error"
+            hidden
+            role="alert"
+            aria-live="polite"
+          ></p>
 
           <div class="split-fields">
             <label class="field">
-              <span>Display Name</span>
-              <input id="provider-name" type="text" placeholder="OpenRouter" />
+              <span data-i18n="Display Name">Display Name</span>
+              <input
+                id="provider-name"
+                type="text"
+                placeholder="OpenRouter"
+                data-i18n-placeholder="OpenRouter"
+              />
             </label>
             <label class="field">
-              <span>Protocol</span>
+              <span data-i18n="Protocol">Protocol</span>
               <select id="provider-protocol">
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="generic">Generic HTTP</option>
+                <option value="openai" data-i18n="OpenAI">OpenAI</option>
+                <option value="anthropic" data-i18n="Anthropic">
+                  Anthropic
+                </option>
+                <option value="generic" data-i18n="Generic HTTP">
+                  Generic HTTP
+                </option>
               </select>
             </label>
           </div>
 
           <label class="field">
-            <span>Proxy Path</span>
+            <span data-i18n="Proxy Path">Proxy Path</span>
             <input
               id="provider-path"
               type="text"
               placeholder="openrouter"
+              data-i18n-placeholder="openrouter"
               autocapitalize="off"
               autocorrect="off"
               spellcheck="false"
             />
-            <p class="compact-note proxy-demo" id="provider-path-demo">
+            <p
+              class="compact-note proxy-demo"
+              id="provider-path-demo"
+              data-i18n="Local ingress demo will appear here."
+            >
               Local ingress demo will appear here.
             </p>
           </label>
 
           <label class="field">
-            <span>Base URL</span>
+            <span data-i18n="Base URL">Base URL</span>
             <input
               id="provider-base-url"
               type="text"
               placeholder="https://openrouter.ai/api/v1"
+              data-i18n-placeholder="https://openrouter.ai/api/v1"
               inputmode="url"
               autocapitalize="off"
               autocorrect="off"
@@ -396,22 +752,24 @@
 
           <div class="split-fields">
             <label class="field">
-              <span>Auth Header</span>
+              <span data-i18n="Auth Header">Auth Header</span>
               <input
                 id="provider-auth-header"
                 type="text"
                 placeholder="Authorization"
+                data-i18n-placeholder="Authorization"
                 autocapitalize="off"
                 autocorrect="off"
                 spellcheck="false"
               />
             </label>
             <label class="field">
-              <span>Auth Prefix</span>
+              <span data-i18n="Auth Prefix">Auth Prefix</span>
               <input
                 id="provider-auth-prefix"
                 type="text"
                 placeholder="Bearer"
+                data-i18n-placeholder="Bearer"
                 autocapitalize="off"
                 autocorrect="off"
                 spellcheck="false"
@@ -421,11 +779,17 @@
 
           <label class="toggle">
             <input id="provider-enabled" type="checkbox" checked />
-            <span>Provider enabled</span>
+            <span data-i18n="Provider enabled">Provider enabled</span>
           </label>
 
           <div class="form-actions">
-            <button id="provider-submit" type="submit">Save Provider</button>
+            <button
+              id="provider-submit"
+              type="submit"
+              data-i18n="Save Provider"
+            >
+              Save Provider
+            </button>
           </div>
         </form>
       </div>
@@ -435,11 +799,11 @@
       <div class="vault-dialog-card">
         <div class="panel-head dialog-head">
           <div>
-            <p class="panel-kicker">Credentials</p>
+            <p class="panel-kicker" data-i18n="Credentials">Credentials</p>
             <h2 id="account-form-title">New Account</h2>
             <p class="panel-copy" id="account-form-copy">
-              Store one encrypted credential set per account. Switching is controlled by explicit
-              route bindings, not automatic failover.
+              Store one encrypted credential set per account. Switching is
+              controlled by explicit route bindings, not automatic failover.
             </p>
           </div>
           <button
@@ -447,21 +811,34 @@
             id="close-account-dialog"
             type="button"
             aria-label="Close account dialog"
+            data-i18n-aria-label="Close account dialog"
           >
             x
           </button>
         </div>
         <form id="account-form" class="dialog-form">
           <input id="account-id" type="hidden" />
+          <p
+            class="form-error"
+            id="account-form-error"
+            hidden
+            role="alert"
+            aria-live="polite"
+          ></p>
 
           <label class="field">
-            <span>Provider</span>
+            <span data-i18n="Provider">Provider</span>
             <select id="account-provider"></select>
           </label>
 
           <label class="field">
-            <span>Name</span>
-            <input id="account-name" type="text" placeholder="Primary Account" />
+            <span data-i18n="Name">Name</span>
+            <input
+              id="account-name"
+              type="text"
+              placeholder="Primary Account"
+              data-i18n-placeholder="Primary Account"
+            />
           </label>
 
           <label class="field">
@@ -470,6 +847,7 @@
               id="account-api-key"
               type="password"
               placeholder="Leave blank to keep the existing secret"
+              data-i18n-placeholder="Leave blank to keep the existing secret"
               autocapitalize="off"
               autocorrect="off"
               spellcheck="false"
@@ -479,40 +857,68 @@
           <div class="account-secret-tools" id="account-secret-tools" hidden>
             <div class="secret-inline-head">
               <p class="muted compact-note" id="account-secret-copy">
-                Stored secret is encrypted. Enter the vault password to reveal the current key.
+                Stored secret is encrypted. Enter the vault password to reveal
+                the current key.
               </p>
-              <button class="ghost" id="account-secret-toggle" type="button">View Stored Key</button>
+              <button class="ghost" id="account-secret-toggle" type="button">
+                View Stored Key
+              </button>
             </div>
 
-            <div class="secret-result secret-inline-panel" id="account-secret-panel" hidden>
+            <div
+              class="secret-result secret-inline-panel"
+              id="account-secret-panel"
+              hidden
+            >
               <label class="field">
-                <span>Vault Password</span>
+                <span data-i18n="Vault Password">Vault Password</span>
                 <input
                   id="account-secret-password"
                   type="password"
                   autocomplete="current-password"
                   placeholder="Enter vault password to reveal this key"
+                  data-i18n-placeholder="Enter vault password to reveal this key"
                 />
               </label>
 
               <div class="form-actions">
-                <button class="ghost" id="account-secret-reveal" type="button">Reveal</button>
-                <button class="ghost" id="account-secret-copy-button" type="button">Copy API Key</button>
+                <button
+                  class="ghost"
+                  id="account-secret-reveal"
+                  type="button"
+                  data-i18n="Reveal"
+                >
+                  Reveal
+                </button>
+                <button
+                  class="ghost"
+                  id="account-secret-copy-button"
+                  type="button"
+                  data-i18n="Copy API Key"
+                >
+                  Copy API Key
+                </button>
               </div>
 
               <label class="field">
-                <span>Stored API Key</span>
-                <input id="account-secret-value" class="secret-value" type="text" readonly />
+                <span data-i18n="Stored API Key">Stored API Key</span>
+                <input
+                  id="account-secret-value"
+                  class="secret-value"
+                  type="text"
+                  readonly
+                />
               </label>
             </div>
           </div>
 
           <label class="field">
-            <span>Base URL Override</span>
+            <span data-i18n="Base URL Override">Base URL Override</span>
             <input
               id="account-base-url"
               type="text"
               placeholder="Optional. Defaults to the provider base URL"
+              data-i18n-placeholder="Optional. Defaults to the provider base URL"
               inputmode="url"
               autocapitalize="off"
               autocorrect="off"
@@ -521,17 +927,24 @@
           </label>
 
           <label class="field">
-            <span>Note</span>
-            <textarea id="account-note" rows="3" placeholder="Optional note"></textarea>
+            <span data-i18n="Note">Note</span>
+            <textarea
+              id="account-note"
+              rows="3"
+              placeholder="Optional note"
+              data-i18n-placeholder="Optional note"
+            ></textarea>
           </label>
 
           <label class="toggle">
             <input id="account-enabled" type="checkbox" checked />
-            <span>Account enabled</span>
+            <span data-i18n="Account enabled">Account enabled</span>
           </label>
 
           <div class="form-actions">
-            <button id="account-submit" type="submit">Save Account</button>
+            <button id="account-submit" type="submit" data-i18n="Save Account">
+              Save Account
+            </button>
           </div>
         </form>
       </div>
@@ -541,11 +954,11 @@
       <div class="vault-dialog-card">
         <div class="panel-head dialog-head">
           <div>
-            <p class="panel-kicker">Routing</p>
+            <p class="panel-kicker" data-i18n="Routing">Routing</p>
             <h2 id="route-form-title">New Route</h2>
             <p class="panel-copy" id="route-form-copy">
-              Set one default account per provider, then add optional model-prefix overrides for
-              fine-grained account selection.
+              Set one default account per provider, then add optional
+              model-prefix overrides for fine-grained account selection.
             </p>
           </div>
           <button
@@ -553,22 +966,31 @@
             id="close-route-dialog"
             type="button"
             aria-label="Close route dialog"
+            data-i18n-aria-label="Close route dialog"
           >
             x
           </button>
         </div>
         <form id="route-form" class="dialog-form">
+          <p
+            class="form-error"
+            id="route-form-error"
+            hidden
+            role="alert"
+            aria-live="polite"
+          ></p>
           <label class="field">
-            <span>Provider</span>
+            <span data-i18n="Provider">Provider</span>
             <select id="route-provider"></select>
           </label>
 
           <label class="field">
-            <span>Model Prefix</span>
+            <span data-i18n="Model Prefix">Model Prefix</span>
             <input
               id="route-prefix"
               type="text"
               placeholder="Leave empty for the provider default"
+              data-i18n-placeholder="Leave empty for the provider default"
               autocapitalize="off"
               autocorrect="off"
               spellcheck="false"
@@ -576,7 +998,7 @@
           </label>
 
           <label class="field">
-            <span>Account</span>
+            <span data-i18n="Account">Account</span>
             <select id="route-account"></select>
           </label>
 
@@ -585,7 +1007,9 @@
           </p>
 
           <div class="form-actions">
-            <button id="route-submit" type="submit">Save Route</button>
+            <button id="route-submit" type="submit" data-i18n="Save Route">
+              Save Route
+            </button>
           </div>
         </form>
       </div>
@@ -595,7 +1019,9 @@
       <div class="vault-dialog-card">
         <div class="panel-head dialog-head">
           <div>
-            <p class="panel-kicker">Confirm Action</p>
+            <p class="panel-kicker" data-i18n="Confirm Action">
+              Confirm Action
+            </p>
             <h2 id="confirm-dialog-title">Confirm</h2>
             <p class="panel-copy" id="confirm-dialog-copy">
               Please confirm this action.
@@ -606,6 +1032,7 @@
             id="close-confirm-dialog"
             type="button"
             aria-label="Close confirmation dialog"
+            data-i18n-aria-label="Close confirmation dialog"
           >
             x
           </button>
@@ -613,17 +1040,38 @@
 
         <form id="confirm-form" class="dialog-form">
           <div class="form-actions">
-            <button class="ghost" id="confirm-cancel" type="button">Cancel</button>
-            <button id="confirm-submit" type="submit" data-tone="danger">Confirm</button>
+            <button
+              class="ghost"
+              id="confirm-cancel"
+              type="button"
+              data-i18n="Cancel"
+            >
+              Cancel
+            </button>
+            <button
+              id="confirm-submit"
+              type="submit"
+              data-tone="danger"
+              data-i18n="Confirm"
+            >
+              Confirm
+            </button>
           </div>
         </form>
       </div>
     </dialog>
 
-    <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+    <div
+      class="toast-stack"
+      id="toast-stack"
+      aria-live="polite"
+      aria-atomic="true"
+    ></div>
 
     <template id="empty-template">
-      <div class="empty">Nothing to show yet.</div>
+      <div class="empty" data-i18n="Nothing to show yet.">
+        Nothing to show yet.
+      </div>
     </template>
 
     <script type="module" src="./app.js"></script>

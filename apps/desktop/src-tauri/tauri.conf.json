@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LocalOpenRouter",
+  "productName": "LocalAIRouter",
   "version": "0.1.0",
-  "identifier": "ai.localopenrouter.desktop",
+  "identifier": "ai.localairouter.desktop",
   "build": {
     "frontendDist": "../ui"
   },
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "LocalOpenRouter",
+        "title": "LocalAIRouter",
         "width": 1440,
         "height": 920,
         "minWidth": 1080,

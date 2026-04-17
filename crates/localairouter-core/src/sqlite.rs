@@ -3,7 +3,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::Path;
 use std::ptr;
 
-use crate::error::{LocalOpenRouterError, Result};
+use crate::error::{LocalAIRouterError, Result};
 
 #[allow(non_camel_case_types)]
 type sqlite3 = c_void;
@@ -118,14 +118,14 @@ impl Row {
             .get(name)
             .and_then(SqlValue::as_text)
             .map(ToOwned::to_owned)
-            .ok_or_else(|| LocalOpenRouterError::Sqlite(format!("missing text column `{name}`")))
+            .ok_or_else(|| LocalAIRouterError::Sqlite(format!("missing text column `{name}`")))
     }
 
     pub fn get_optional_text(&self, name: &str) -> Result<Option<String>> {
         match self.columns.get(name) {
             Some(SqlValue::Null) | None => Ok(None),
             Some(SqlValue::Text(value)) => Ok(Some(value.clone())),
-            _ => Err(LocalOpenRouterError::Sqlite(format!(
+            _ => Err(LocalAIRouterError::Sqlite(format!(
                 "column `{name}` is not text"
             ))),
         }
@@ -135,14 +135,14 @@ impl Row {
         self.columns
             .get(name)
             .and_then(SqlValue::as_i64)
-            .ok_or_else(|| LocalOpenRouterError::Sqlite(format!("missing integer column `{name}`")))
+            .ok_or_else(|| LocalAIRouterError::Sqlite(format!("missing integer column `{name}`")))
     }
 
     pub fn get_optional_i64(&self, name: &str) -> Result<Option<i64>> {
         match self.columns.get(name) {
             Some(SqlValue::Null) | None => Ok(None),
             Some(SqlValue::Integer(value)) => Ok(Some(*value)),
-            _ => Err(LocalOpenRouterError::Sqlite(format!(
+            _ => Err(LocalAIRouterError::Sqlite(format!(
                 "column `{name}` is not integer"
             ))),
         }
@@ -153,7 +153,7 @@ impl Row {
             .get(name)
             .and_then(SqlValue::as_blob)
             .map(ToOwned::to_owned)
-            .ok_or_else(|| LocalOpenRouterError::Sqlite(format!("missing blob column `{name}`")))
+            .ok_or_else(|| LocalAIRouterError::Sqlite(format!("missing blob column `{name}`")))
     }
 }
 
@@ -166,7 +166,7 @@ unsafe impl Send for Connection {}
 impl Connection {
     pub fn open(path: &Path) -> Result<Self> {
         let path_c = CString::new(path.to_string_lossy().as_bytes())
-            .map_err(|_| LocalOpenRouterError::Sqlite("database path contains NUL byte".into()))?;
+            .map_err(|_| LocalAIRouterError::Sqlite("database path contains NUL byte".into()))?;
         let mut raw = ptr::null_mut();
         let rc = unsafe {
             sqlite3_open_v2(
@@ -186,7 +186,7 @@ impl Connection {
                 }
                 message
             };
-            return Err(LocalOpenRouterError::Sqlite(message));
+            return Err(LocalAIRouterError::Sqlite(message));
         }
         let connection = Self { raw };
         connection.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
@@ -195,7 +195,7 @@ impl Connection {
 
     pub fn execute_batch(&self, sql: &str) -> Result<()> {
         let sql_c = CString::new(sql)
-            .map_err(|_| LocalOpenRouterError::Sqlite("SQL contains NUL byte".into()))?;
+            .map_err(|_| LocalAIRouterError::Sqlite("SQL contains NUL byte".into()))?;
         let mut error_ptr: *mut c_char = ptr::null_mut();
         let rc = unsafe {
             sqlite3_exec(
@@ -216,7 +216,7 @@ impl Connection {
                 }
                 msg
             };
-            return Err(LocalOpenRouterError::Sqlite(message));
+            return Err(LocalAIRouterError::Sqlite(message));
         }
         Ok(())
     }
@@ -227,7 +227,7 @@ impl Connection {
         let rc = unsafe { sqlite3_step(stmt) };
         finalize(stmt);
         if rc != SQLITE_DONE {
-            return Err(LocalOpenRouterError::Sqlite(error_message(self.raw)));
+            return Err(LocalAIRouterError::Sqlite(error_message(self.raw)));
         }
         Ok(())
     }
@@ -264,7 +264,7 @@ impl Connection {
                 _ => {
                     let message = error_message(self.raw);
                     finalize(stmt);
-                    return Err(LocalOpenRouterError::Sqlite(message));
+                    return Err(LocalAIRouterError::Sqlite(message));
                 }
             }
         }
@@ -274,12 +274,12 @@ impl Connection {
 
     fn prepare(&self, sql: &str) -> Result<*mut sqlite3_stmt> {
         let sql_c = CString::new(sql)
-            .map_err(|_| LocalOpenRouterError::Sqlite("SQL contains NUL byte".into()))?;
+            .map_err(|_| LocalAIRouterError::Sqlite("SQL contains NUL byte".into()))?;
         let mut stmt = ptr::null_mut();
         let rc =
             unsafe { sqlite3_prepare_v2(self.raw, sql_c.as_ptr(), -1, &mut stmt, ptr::null_mut()) };
         if rc != SQLITE_OK {
-            return Err(LocalOpenRouterError::Sqlite(error_message(self.raw)));
+            return Err(LocalAIRouterError::Sqlite(error_message(self.raw)));
         }
         Ok(stmt)
     }
@@ -301,7 +301,7 @@ fn bind_all(stmt: *mut sqlite3_stmt, params: &[SqlValue]) -> Result<()> {
             SqlValue::Integer(value) => unsafe { sqlite3_bind_int64(stmt, index, *value) },
             SqlValue::Text(value) => {
                 let cstr = CString::new(value.as_str()).map_err(|_| {
-                    LocalOpenRouterError::Sqlite("text parameter contains NUL byte".into())
+                    LocalAIRouterError::Sqlite("text parameter contains NUL byte".into())
                 })?;
                 unsafe {
                     sqlite3_bind_text(
@@ -324,7 +324,7 @@ fn bind_all(stmt: *mut sqlite3_stmt, params: &[SqlValue]) -> Result<()> {
             },
         };
         if rc != SQLITE_OK {
-            return Err(LocalOpenRouterError::Sqlite(
+            return Err(LocalAIRouterError::Sqlite(
                 "failed to bind sqlite parameter".into(),
             ));
         }

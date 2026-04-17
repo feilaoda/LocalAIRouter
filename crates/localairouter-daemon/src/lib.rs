@@ -17,16 +17,17 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use localopenrouter_core::models::{
-    AccountInput, ApiProtocol, LogQuery, ProviderDefinition, ProviderInput, RequestLogInput,
-    RevealSecretRequest, RouteBindingInput, UnlockRequest,
+use localairouter_core::models::{
+    AccountInput, ApiProtocol, DailyStatsQuery, LogQuery, ProviderDefinition, ProviderInput,
+    RequestLogInput, RevealSecretRequest, RouteBindingInput, UnlockRequest,
 };
-use localopenrouter_core::{LocalOpenRouterError, Repository, Result, extract_model};
+use localairouter_core::{LocalAIRouterError, Repository, Result, extract_model};
 use reqwest::Client;
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
+use url::form_urlencoded;
 use uuid::Uuid;
 
 mod config;
@@ -38,7 +39,6 @@ pub use config::{
 
 type BoxError = Box<dyn Error + Send + Sync>;
 type ResponseBody = BoxBody<Bytes, BoxError>;
-const MONITOR_FEED_CAP: usize = 200;
 const MONITOR_PREVIEW_LIMIT: usize = 280;
 
 #[derive(Clone)]
@@ -234,25 +234,28 @@ pub async fn run() -> Result<()> {
 pub async fn run_with_config(config: DaemonConfig) -> Result<()> {
     init_tracing(&config.tracing_filter);
     let port = config.port;
-    info!("localopenrouter daemon booting on requested port {port}");
+    info!(
+        "localairouter daemon booting on requested port {port} with monitor buffer {}",
+        config.monitor_buffer_limit
+    );
     spawn_parent_watchdog(config.parent_pid);
     let listener = TcpListener::bind(("127.0.0.1", port))
         .await
         .map_err(|error| {
-            LocalOpenRouterError::Io(format!("failed to bind 127.0.0.1:{port}: {error}"))
+            LocalAIRouterError::Io(format!("failed to bind 127.0.0.1:{port}: {error}"))
         })?;
     let repository = Arc::new(Repository::new(port).await.map_err(|error| {
-        LocalOpenRouterError::Message(format!("failed to initialize repository: {error}"))
+        LocalAIRouterError::Message(format!("failed to initialize repository: {error}"))
     })?);
     let client = Client::builder().no_gzip().build().map_err(map_http)?;
-    let monitor = Arc::new(MonitorFeed::new(MONITOR_FEED_CAP));
+    let monitor = Arc::new(MonitorFeed::new(config.monitor_buffer_limit));
     let state = AppState {
         repository,
         client,
         monitor,
     };
     let addr = listener.local_addr()?;
-    info!("localopenrouter daemon listening on http://{addr}");
+    info!("localairouter daemon listening on http://{addr}");
 
     loop {
         let (stream, remote_addr) = listener.accept().await?;
@@ -303,7 +306,7 @@ async fn handle_request(
             state.repository.lock().await;
             Ok(json_response(
                 StatusCode::OK,
-                &localopenrouter_core::models::UnlockResponse {
+                &localairouter_core::models::UnlockResponse {
                     initialized: state.repository.is_initialized().await?,
                     unlocked: false,
                     message: "vault locked".into(),
@@ -359,6 +362,15 @@ async fn handle_request(
             let log = state.repository.get_log(log_id).await?;
             Ok(json_response(StatusCode::OK, &log))
         }
+        (Method::GET, _) if path.starts_with("/admin/stats/daily") => {
+            let query = parse_daily_stats_query(request.uri().query());
+            let stats = state.repository.query_daily_stats(query).await?;
+            Ok(json_response(StatusCode::OK, &stats))
+        }
+        (Method::POST, "/admin/stats/rebuild-tokens") => {
+            let report = state.repository.rebuild_total_tokens().await?;
+            Ok(json_response(StatusCode::OK, &report))
+        }
         (Method::GET, _) if path.starts_with("/admin/logs") => {
             let query = parse_log_query(request.uri().query());
             let logs = state.repository.query_logs(query).await?;
@@ -394,7 +406,7 @@ async fn handle_request(
         }
         _ => match resolve_provider_for_path(&state, &path).await? {
             Some(provider) => proxy_request(state, provider, request).await,
-            None => Err(LocalOpenRouterError::NotFound(path)),
+            None => Err(LocalAIRouterError::NotFound(path)),
         },
     }
 }
@@ -535,7 +547,7 @@ async fn proxy_request(
                     streamed: false,
                 })
                 .await;
-            return Err(LocalOpenRouterError::Http(error.to_string()));
+            return Err(LocalAIRouterError::Http(error.to_string()));
         }
     };
 
@@ -621,7 +633,7 @@ async fn proxy_request(
         let mut response = Response::builder()
             .status(status)
             .body(full_body(body))
-            .map_err(|error| LocalOpenRouterError::Http(error.to_string()))?;
+            .map_err(|error| LocalAIRouterError::Http(error.to_string()))?;
         copy_headers(&upstream_headers, response.headers_mut());
         Ok(cors_response(response))
     }
@@ -634,7 +646,7 @@ fn apply_provider_auth(
 ) -> Result<reqwest::RequestBuilder> {
     let header_name = reqwest::header::HeaderName::from_bytes(provider.auth_header.as_bytes())
         .map_err(|error| {
-            LocalOpenRouterError::Validation(format!(
+            LocalAIRouterError::Validation(format!(
                 "invalid auth header `{}`: {error}",
                 provider.auth_header
             ))
@@ -644,7 +656,7 @@ fn apply_provider_auth(
         _ => api_key.to_owned(),
     };
     let header_value = reqwest::header::HeaderValue::from_str(&header_value).map_err(|error| {
-        LocalOpenRouterError::Validation(format!(
+        LocalAIRouterError::Validation(format!(
             "invalid auth header value for provider `{}`: {error}",
             provider.slug
         ))
@@ -725,31 +737,48 @@ async fn stream_response(
     let mut response = Response::builder()
         .status(status)
         .body(body)
-        .map_err(|error| LocalOpenRouterError::Http(error.to_string()))?;
+        .map_err(|error| LocalAIRouterError::Http(error.to_string()))?;
     copy_headers(&upstream_headers, response.headers_mut());
     Ok(cors_response(response))
 }
 
 fn parse_log_query(raw: Option<&str>) -> LogQuery {
     let mut query = LogQuery::default();
-    for pair in raw
-        .unwrap_or_default()
-        .split('&')
-        .filter(|pair| !pair.is_empty())
-    {
-        let mut parts = pair.splitn(2, '=');
-        let key = parts.next().unwrap_or_default();
-        let value = parts.next().unwrap_or_default();
+    for (key, value) in form_urlencoded::parse(raw.unwrap_or_default().as_bytes()) {
         match key {
-            "provider" if !value.is_empty() => query.provider = Some(value.into()),
-            "accountId" | "account_id" if !value.is_empty() => {
-                query.account_id = Some(value.into())
+            key if key == "provider" && !value.is_empty() => {
+                query.provider = Some(value.into_owned())
             }
-            "sessionId" | "session_id" if !value.is_empty() => {
-                query.session_id = Some(value.into())
+            key if (key == "accountId" || key == "account_id") && !value.is_empty() => {
+                query.account_id = Some(value.into_owned())
             }
-            "statusCode" | "status_code" => query.status_code = value.parse().ok(),
-            "limit" => query.limit = value.parse().ok(),
+            key if (key == "sessionId" || key == "session_id") && !value.is_empty() => {
+                query.session_id = Some(value.into_owned())
+            }
+            key if key == "statusCode" || key == "status_code" => {
+                query.status_code = value.parse().ok()
+            }
+            key if (key == "createdFrom" || key == "created_from") && !value.is_empty() => {
+                query.created_from = Some(value.into_owned())
+            }
+            key if (key == "createdTo" || key == "created_to") && !value.is_empty() => {
+                query.created_to = Some(value.into_owned())
+            }
+            key if key == "limit" => query.limit = value.parse().ok(),
+            _ => {}
+        }
+    }
+    query
+}
+
+fn parse_daily_stats_query(raw: Option<&str>) -> DailyStatsQuery {
+    let mut query = DailyStatsQuery::default();
+    for (key, value) in form_urlencoded::parse(raw.unwrap_or_default().as_bytes()) {
+        match key {
+            key if key == "days" => query.days = value.parse().ok(),
+            key if key == "utcOffsetMinutes" || key == "utc_offset_minutes" => {
+                query.utc_offset_minutes = value.parse().ok()
+            }
             _ => {}
         }
     }
@@ -764,7 +793,7 @@ async fn parse_json<T: serde::de::DeserializeOwned>(request: Request<Incoming>) 
         .map_err(map_http)?
         .to_bytes();
     serde_json::from_slice(&bytes)
-        .map_err(|error| LocalOpenRouterError::Validation(format!("invalid JSON payload: {error}")))
+        .map_err(|error| LocalAIRouterError::Validation(format!("invalid JSON payload: {error}")))
 }
 
 fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<ResponseBody> {
@@ -779,16 +808,16 @@ fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<Respon
     response
 }
 
-fn error_response(error: LocalOpenRouterError) -> Response<ResponseBody> {
+fn error_response(error: LocalAIRouterError) -> Response<ResponseBody> {
     let status = match &error {
-        LocalOpenRouterError::Validation(_) => StatusCode::BAD_REQUEST,
-        LocalOpenRouterError::Locked => StatusCode::LOCKED,
-        LocalOpenRouterError::NotFound(_) => StatusCode::NOT_FOUND,
-        LocalOpenRouterError::Http(_) => StatusCode::BAD_GATEWAY,
-        LocalOpenRouterError::Sqlite(_)
-        | LocalOpenRouterError::Crypto(_)
-        | LocalOpenRouterError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        LocalOpenRouterError::Message(_) => StatusCode::BAD_REQUEST,
+        LocalAIRouterError::Validation(_) => StatusCode::BAD_REQUEST,
+        LocalAIRouterError::Locked => StatusCode::LOCKED,
+        LocalAIRouterError::NotFound(_) => StatusCode::NOT_FOUND,
+        LocalAIRouterError::Http(_) => StatusCode::BAD_GATEWAY,
+        LocalAIRouterError::Sqlite(_)
+        | LocalAIRouterError::Crypto(_)
+        | LocalAIRouterError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        LocalAIRouterError::Message(_) => StatusCode::BAD_REQUEST,
     };
     let payload = serde_json::json!({
         "error": error.to_string(),
@@ -902,8 +931,8 @@ fn is_hop_by_hop(name: &str) -> bool {
     )
 }
 
-fn map_http(error: impl ToString) -> LocalOpenRouterError {
-    LocalOpenRouterError::Http(error.to_string())
+fn map_http(error: impl ToString) -> LocalAIRouterError {
+    LocalAIRouterError::Http(error.to_string())
 }
 
 fn init_tracing(tracing_filter: &str) {

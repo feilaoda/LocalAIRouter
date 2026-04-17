@@ -2,7 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-use crate::error::{LocalOpenRouterError, Result};
+use crate::error::{LocalAIRouterError, Result};
+
+pub const DEFAULT_MONITOR_BUFFER_LIMIT: u32 = 200;
+pub const DEFAULT_LOG_RETENTION_DAYS: u32 = 30;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ApiProtocol {
@@ -31,14 +34,14 @@ impl Display for ApiProtocol {
 }
 
 impl FromStr for ApiProtocol {
-    type Err = LocalOpenRouterError;
+    type Err = LocalAIRouterError;
 
     fn from_str(value: &str) -> Result<Self> {
         match value {
             "openai" => Ok(Self::OpenAi),
             "anthropic" => Ok(Self::Anthropic),
             "generic" => Ok(Self::Generic),
-            other => Err(LocalOpenRouterError::Validation(format!(
+            other => Err(LocalAIRouterError::Validation(format!(
                 "unsupported protocol `{other}`"
             ))),
         }
@@ -84,6 +87,38 @@ pub struct HealthResponse {
     pub initialized: bool,
     pub unlocked: bool,
     pub port: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub daemon_port: u16,
+    pub monitor_buffer_limit: u32,
+    pub log_retention_days: u32,
+    pub logs_dir: String,
+    pub default_logs_dir: String,
+    pub data_root: String,
+    pub database_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettingsInput {
+    pub daemon_port: u16,
+    #[serde(default = "default_monitor_buffer_limit")]
+    pub monitor_buffer_limit: u32,
+    #[serde(default = "default_log_retention_days")]
+    pub log_retention_days: u32,
+    pub logs_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenRebuildReport {
+    pub total_logs: u64,
+    pub rebuilt_logs: u64,
+    pub updated_logs: u64,
+    pub skipped_logs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +185,14 @@ fn default_true() -> bool {
     true
 }
 
+fn default_monitor_buffer_limit() -> u32 {
+    DEFAULT_MONITOR_BUFFER_LIMIT
+}
+
+fn default_log_retention_days() -> u32 {
+    DEFAULT_LOG_RETENTION_DAYS
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteBinding {
@@ -175,7 +218,25 @@ pub struct LogQuery {
     pub account_id: Option<String>,
     pub session_id: Option<String>,
     pub status_code: Option<u16>,
+    pub created_from: Option<String>,
+    pub created_to: Option<String>,
     pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyStatsQuery {
+    pub days: Option<u32>,
+    pub utc_offset_minutes: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyStatsPoint {
+    pub day: String,
+    pub request_count: u64,
+    pub success_count: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +253,7 @@ pub struct RequestLog {
     pub status_code: Option<u16>,
     pub duration_ms: u64,
     pub error_text: Option<String>,
+    pub total_tokens: u64,
     pub request_headers: String,
     pub request_body: String,
     pub response_headers: String,
@@ -343,9 +405,94 @@ fn find_session_id(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+pub fn extract_total_tokens(response_body: &str) -> Option<u64> {
+    let trimmed = response_body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    extract_total_tokens_from_json(trimmed.as_bytes()).or_else(|| {
+        trimmed
+            .lines()
+            .filter_map(|line| {
+                let candidate = line
+                    .strip_prefix("data:")
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| line.trim());
+                if candidate.is_empty() || candidate == "[DONE]" {
+                    return None;
+                }
+                extract_total_tokens_from_json(candidate.as_bytes())
+            })
+            .max()
+    })
+}
+
+fn extract_total_tokens_from_json(bytes: &[u8]) -> Option<u64> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    find_total_tokens(&value)
+}
+
+fn find_total_tokens(value: &serde_json::Value) -> Option<u64> {
+    match value {
+        serde_json::Value::Object(map) => {
+            let current = total_tokens_from_usage_object(map);
+            let nested = map.values().filter_map(find_total_tokens).max();
+            current.into_iter().chain(nested).max()
+        }
+        serde_json::Value::Array(values) => values.iter().filter_map(find_total_tokens).max(),
+        _ => None,
+    }
+}
+
+fn total_tokens_from_usage_object(
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Option<u64> {
+    let prompt_tokens = token_value(map.get("prompt_tokens"));
+    let input_tokens = token_value(map.get("input_tokens"));
+    let cached_tokens = map
+        .get("input_tokens_details")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|details| token_value(details.get("cached_tokens")));
+    let cache_creation_tokens = token_value(map.get("cache_creation_input_tokens"));
+    let cache_read_tokens = token_value(map.get("cache_read_input_tokens"));
+    let completion_tokens = token_value(map.get("completion_tokens"));
+    let output_tokens = token_value(map.get("output_tokens"));
+    let total_tokens = token_value(map.get("total_tokens"));
+
+    let cache_discount = cached_tokens.unwrap_or(0) + cache_read_tokens.unwrap_or(0);
+    let input_base = prompt_tokens.or(input_tokens);
+    let input = match input_base {
+        Some(base) => Some(
+            base.saturating_sub(cache_discount) + cache_creation_tokens.unwrap_or(0),
+        ),
+        None => cache_creation_tokens,
+    };
+    let output = completion_tokens.or(output_tokens);
+
+    match total_tokens {
+        Some(total) => Some(total.saturating_sub(cache_discount)),
+        None => match (input, output) {
+            (Some(input), Some(output)) => Some(input + output),
+            (Some(input), None) => Some(input),
+            (None, Some(output)) => Some(output),
+            (None, None) => None,
+        },
+    }
+}
+
+fn token_value(value: Option<&serde_json::Value>) -> Option<u64> {
+    value.and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_i64().filter(|number| *number >= 0).map(|number| number as u64))
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::extract_session_id;
+    use super::{extract_session_id, extract_total_tokens};
 
     #[test]
     fn extracts_session_id_from_request_json() {
@@ -370,5 +517,29 @@ mod tests {
             "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"conversation_id\":\"conv_789\"}}\n\n",
         );
         assert_eq!(from_sse.as_deref(), Some("conv_789"));
+    }
+
+    #[test]
+    fn extracts_total_tokens_from_json_usage() {
+        let total = extract_total_tokens(
+            r#"{"id":"resp_123","usage":{"prompt_tokens":120,"completion_tokens":80,"total_tokens":200}}"#,
+        );
+        assert_eq!(total, Some(200));
+    }
+
+    #[test]
+    fn extracts_total_tokens_from_sse_usage() {
+        let total = extract_total_tokens(
+            "event: message_start\ndata: {\"message\":{\"usage\":{\"input_tokens\":64,\"output_tokens\":16}}}\n\ndata: {\"usage\":{\"total_tokens\":96}}\n\ndata: [DONE]\n",
+        );
+        assert_eq!(total, Some(96));
+    }
+
+    #[test]
+    fn extracts_effective_total_tokens_when_cached_tokens_are_reported() {
+        let total = extract_total_tokens(
+            r#"{"usage":{"input_tokens":192662,"input_tokens_details":{"cached_tokens":192512},"output_tokens":893,"total_tokens":193555}}"#,
+        );
+        assert_eq!(total, Some(1043));
     }
 }

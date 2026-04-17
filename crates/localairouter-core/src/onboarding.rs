@@ -1,7 +1,7 @@
-use crate::error::{LocalOpenRouterError, Result};
+use crate::error::{LocalAIRouterError, Result};
 use crate::models::{EnvVarExample, OnboardingGuide, ProviderDefinition};
 
-pub const DEFAULT_PORT: u16 = 7331;
+pub const DEFAULT_PORT: u16 = 7321;
 
 pub fn guide_for_target(
     target: &str,
@@ -22,18 +22,18 @@ pub fn guide_for_target(
                 },
                 EnvVarExample {
                     key: "OPENAI_API_KEY".into(),
-                    value: "localopenrouter-managed".into(),
+                    value: "localairouter-managed".into(),
                 },
             ],
             snippet: format!(
-                "export OPENAI_BASE_URL=\"{base_url}\"\nexport OPENAI_API_KEY=\"localopenrouter-managed\""
+                "export OPENAI_BASE_URL=\"{base_url}\"\nexport OPENAI_API_KEY=\"localairouter-managed\""
             ),
             notes: vec![
                 format!(
                     "Point any OpenAI-compatible CLI to the local /{} namespace.",
                     provider.proxy_path
                 ),
-                "The API key is a placeholder for the client; LocalOpenRouter injects the real upstream key."
+                "The API key is a placeholder for the client; LocalAIRouter injects the real upstream key."
                     .into(),
             ],
         }),
@@ -48,22 +48,22 @@ pub fn guide_for_target(
                 },
                 EnvVarExample {
                     key: "ANTHROPIC_API_KEY".into(),
-                    value: "localopenrouter-managed".into(),
+                    value: "localairouter-managed".into(),
                 },
             ],
             snippet: format!(
-                "export ANTHROPIC_BASE_URL=\"{base_url}\"\nexport ANTHROPIC_API_KEY=\"localopenrouter-managed\""
+                "export ANTHROPIC_BASE_URL=\"{base_url}\"\nexport ANTHROPIC_API_KEY=\"localairouter-managed\""
             ),
             notes: vec![
                 format!(
                     "Point Claude Code to the local /{} namespace.",
                     provider.proxy_path
                 ),
-                "Keep the client configured explicitly; LocalOpenRouter does not modify system proxy settings."
+                "Keep the client configured explicitly; LocalAIRouter does not modify system proxy settings."
                     .into(),
             ],
         }),
-        other => Err(LocalOpenRouterError::NotFound(format!(
+        other => Err(LocalAIRouterError::NotFound(format!(
             "unsupported onboarding target `{other}`"
         ))),
     }

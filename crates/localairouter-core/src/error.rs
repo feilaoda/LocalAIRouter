@@ -1,9 +1,9 @@
 use thiserror::Error;
 
-pub type Result<T> = std::result::Result<T, LocalOpenRouterError>;
+pub type Result<T> = std::result::Result<T, LocalAIRouterError>;
 
 #[derive(Debug, Error)]
-pub enum LocalOpenRouterError {
+pub enum LocalAIRouterError {
     #[error("validation error: {0}")]
     Validation(String),
     #[error("vault is locked")]
@@ -22,19 +22,19 @@ pub enum LocalOpenRouterError {
     Message(String),
 }
 
-impl From<std::io::Error> for LocalOpenRouterError {
+impl From<std::io::Error> for LocalAIRouterError {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value.to_string())
     }
 }
 
-impl From<serde_json::Error> for LocalOpenRouterError {
+impl From<serde_json::Error> for LocalAIRouterError {
     fn from(value: serde_json::Error) -> Self {
         Self::Message(value.to_string())
     }
 }
 
-impl From<std::num::ParseIntError> for LocalOpenRouterError {
+impl From<std::num::ParseIntError> for LocalAIRouterError {
     fn from(value: std::num::ParseIntError) -> Self {
         Self::Validation(value.to_string())
     }

@@ -1,5 +1,5 @@
 [package]
-name = "localopenrouter-core"
+name = "localairouter-core"
 edition.workspace = true
 license.workspace = true
 version.workspace = true

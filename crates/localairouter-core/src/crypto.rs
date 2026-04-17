@@ -3,13 +3,14 @@ use ring::pbkdf2;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::num::NonZeroU32;
 
-use crate::error::{LocalOpenRouterError, Result};
+use crate::error::{LocalAIRouterError, Result};
 
 const PBKDF2_ITERATIONS: u32 = 180_000;
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
-const MASTER_CHECK: &[u8] = b"localopenrouter-master-key-v1";
-const LEGACY_MASTER_CHECK: &[u8] = b"localrouter-master-key-v1";
+const MASTER_CHECK: &[u8] = b"localairouter-master-key-v1";
+const LEGACY_MASTER_CHECK: &[u8] = b"localopenrouter-master-key-v1";
+const OLDER_LEGACY_MASTER_CHECK: &[u8] = b"localrouter-master-key-v1";
 
 pub struct InitializedVault {
     pub key: [u8; KEY_LEN],
@@ -38,9 +39,12 @@ pub fn unlock_master_password(
 ) -> Result<[u8; KEY_LEN]> {
     let key = derive_key(password, salt)?;
     let decrypted = decrypt(&key, check_nonce, check_ciphertext)
-        .map_err(|_| LocalOpenRouterError::Crypto("master password is invalid".into()))?;
-    if decrypted != MASTER_CHECK && decrypted != LEGACY_MASTER_CHECK {
-        return Err(LocalOpenRouterError::Crypto(
+        .map_err(|_| LocalAIRouterError::Crypto("master password is invalid".into()))?;
+    if decrypted != MASTER_CHECK
+        && decrypted != LEGACY_MASTER_CHECK
+        && decrypted != OLDER_LEGACY_MASTER_CHECK
+    {
+        return Err(LocalAIRouterError::Crypto(
             "master password is invalid".into(),
         ));
     }
@@ -54,12 +58,12 @@ pub fn encrypt_secret(key: &[u8; KEY_LEN], plaintext: &str) -> Result<(Vec<u8>, 
 pub fn decrypt_secret(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8]) -> Result<String> {
     let plaintext = decrypt(key, nonce, ciphertext)?;
     String::from_utf8(plaintext)
-        .map_err(|_| LocalOpenRouterError::Crypto("secret is not valid utf-8".into()))
+        .map_err(|_| LocalAIRouterError::Crypto("secret is not valid utf-8".into()))
 }
 
 fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_LEN]> {
     let iterations = NonZeroU32::new(PBKDF2_ITERATIONS)
-        .ok_or_else(|| LocalOpenRouterError::Crypto("invalid PBKDF2 iteration count".into()))?;
+        .ok_or_else(|| LocalAIRouterError::Crypto("invalid PBKDF2 iteration count".into()))?;
     let mut output = [0_u8; KEY_LEN];
     pbkdf2::derive(
         pbkdf2::PBKDF2_HMAC_SHA256,
@@ -76,26 +80,26 @@ fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> 
     let mut in_out = plaintext.to_vec();
     let key = LessSafeKey::new(
         UnboundKey::new(&CHACHA20_POLY1305, key)
-            .map_err(|_| LocalOpenRouterError::Crypto("failed to initialize cipher".into()))?,
+            .map_err(|_| LocalAIRouterError::Crypto("failed to initialize cipher".into()))?,
     );
     key.seal_in_place_append_tag(
         Nonce::assume_unique_for_key(
             nonce_bytes
                 .clone()
                 .try_into()
-                .map_err(|_| LocalOpenRouterError::Crypto("invalid nonce length".into()))?,
+                .map_err(|_| LocalAIRouterError::Crypto("invalid nonce length".into()))?,
         ),
         Aad::empty(),
         &mut in_out,
     )
-    .map_err(|_| LocalOpenRouterError::Crypto("failed to encrypt secret".into()))?;
+    .map_err(|_| LocalAIRouterError::Crypto("failed to encrypt secret".into()))?;
     Ok((std::mem::take(&mut nonce_bytes), in_out))
 }
 
 fn decrypt(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
     let key = LessSafeKey::new(
         UnboundKey::new(&CHACHA20_POLY1305, key)
-            .map_err(|_| LocalOpenRouterError::Crypto("failed to initialize cipher".into()))?,
+            .map_err(|_| LocalAIRouterError::Crypto("failed to initialize cipher".into()))?,
     );
     let mut in_out = ciphertext.to_vec();
     let plaintext = key
@@ -103,12 +107,12 @@ fn decrypt(key: &[u8; KEY_LEN], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u
             Nonce::assume_unique_for_key(
                 nonce
                     .try_into()
-                    .map_err(|_| LocalOpenRouterError::Crypto("invalid nonce length".into()))?,
+                    .map_err(|_| LocalAIRouterError::Crypto("invalid nonce length".into()))?,
             ),
             Aad::empty(),
             &mut in_out,
         )
-        .map_err(|_| LocalOpenRouterError::Crypto("failed to decrypt secret".into()))?;
+        .map_err(|_| LocalAIRouterError::Crypto("failed to decrypt secret".into()))?;
     Ok(plaintext.to_vec())
 }
 
@@ -116,7 +120,7 @@ fn random_bytes(len: usize) -> Result<Vec<u8>> {
     let mut bytes = vec![0_u8; len];
     SystemRandom::new()
         .fill(&mut bytes)
-        .map_err(|_| LocalOpenRouterError::Crypto("failed to read secure randomness".into()))?;
+        .map_err(|_| LocalAIRouterError::Crypto("failed to read secure randomness".into()))?;
     Ok(bytes)
 }
 
@@ -136,8 +140,8 @@ mod tests {
             &material.check_ciphertext,
         )
         .unwrap();
-        let (nonce, ciphertext) = encrypt_secret(&unlocked, "sk-localopenrouter").unwrap();
+        let (nonce, ciphertext) = encrypt_secret(&unlocked, "sk-localairouter").unwrap();
         let decrypted = decrypt_secret(&unlocked, &nonce, &ciphertext).unwrap();
-        assert_eq!(decrypted, "sk-localopenrouter");
+        assert_eq!(decrypted, "sk-localairouter");
     }
 }

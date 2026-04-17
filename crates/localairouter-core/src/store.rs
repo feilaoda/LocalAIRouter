@@ -1,4 +1,5 @@
-use chrono::Utc;
+use chrono::{Duration, NaiveDate, Utc};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -9,11 +10,13 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::crypto;
-use crate::error::{LocalOpenRouterError, Result};
+use crate::error::{LocalAIRouterError, Result};
 use crate::models::{
-    Account, AccountInput, ApiProtocol, DeleteResponse, HealthResponse, LogQuery,
-    ProviderDefinition, ProviderInput, RequestLog, RequestLogInput, ResolvedAccount,
-    RevealedSecret, RouteBinding, RouteBindingInput, UnlockResponse, extract_session_id,
+    Account, AccountInput, ApiProtocol, AppSettings, AppSettingsInput, DEFAULT_LOG_RETENTION_DAYS,
+    DEFAULT_MONITOR_BUFFER_LIMIT, DailyStatsPoint, DailyStatsQuery, DeleteResponse, HealthResponse,
+    LogQuery, ProviderDefinition, ProviderInput, RequestLog, RequestLogInput, ResolvedAccount,
+    RevealedSecret, RouteBinding, RouteBindingInput, TokenRebuildReport, UnlockResponse,
+    extract_session_id, extract_total_tokens,
 };
 use crate::onboarding::{DEFAULT_PORT, guide_for_target};
 use crate::sqlite::{Connection, Row, SqlValue};
@@ -21,12 +24,21 @@ use crate::sqlite::{Connection, Row, SqlValue};
 const VAULT_SALT_KEY: &str = "vault_salt";
 const VAULT_CHECK_NONCE_KEY: &str = "vault_check_nonce";
 const VAULT_CHECK_CIPHERTEXT_KEY: &str = "vault_check_ciphertext";
-const DATA_DIR_ENV: &str = "LOCALOPENROUTER_DATA_DIR";
-const LEGACY_DATA_DIR_ENV: &str = "LOCALROUTER_DATA_DIR";
-const APP_DIR_NAME: &str = "LocalOpenRouter";
-const LEGACY_APP_DIR_NAME: &str = "LocalRouter";
-const DATABASE_FILE_NAME: &str = "localopenrouter.sqlite3";
-const LEGACY_DATABASE_FILE_NAME: &str = "localrouter.sqlite3";
+const APP_SETTING_DAEMON_PORT_KEY: &str = "daemon_port";
+const APP_SETTING_MONITOR_BUFFER_LIMIT_KEY: &str = "monitor_buffer_limit";
+const APP_SETTING_LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
+const APP_SETTING_LOGS_DIR_KEY: &str = "logs_dir";
+const APP_SETTING_TOTAL_TOKENS_VERSION_KEY: &str = "total_tokens_version";
+const CURRENT_TOTAL_TOKENS_VERSION: &str = "2";
+const DATA_DIR_ENV: &str = "LOCALAIROUTER_DATA_DIR";
+const LEGACY_DATA_DIR_ENV: &str = "LOCALOPENROUTER_DATA_DIR";
+const OLDER_DATA_DIR_ENV: &str = "LOCALROUTER_DATA_DIR";
+const APP_DIR_NAME: &str = "LocalAIRouter";
+const LEGACY_APP_DIR_NAME: &str = "LocalOpenRouter";
+const OLDER_APP_DIR_NAME: &str = "LocalRouter";
+const DATABASE_FILE_NAME: &str = "localairouter.sqlite3";
+const LEGACY_DATABASE_FILE_NAME: &str = "localopenrouter.sqlite3";
+const OLDER_DATABASE_FILE_NAME: &str = "localrouter.sqlite3";
 
 #[derive(Debug, Clone)]
 struct BuiltinProvider {
@@ -115,30 +127,28 @@ impl AppPaths {
             override_dir
         } else {
             let local_data_dir = dirs::data_local_dir().ok_or_else(|| {
-                LocalOpenRouterError::Io("failed to locate local data directory".into())
+                LocalAIRouterError::Io("failed to locate local data directory".into())
             })?;
             resolve_default_root(local_data_dir)
         };
-        fs::create_dir_all(&root)?;
-        let logs = root.join("logs");
-        fs::create_dir_all(&logs)?;
-        Ok(Self {
-            database: database_path_for_root(&root),
-            logs,
-            root,
-        })
+        build_app_paths(root)
     }
 
     pub fn from_root(root: PathBuf) -> Result<Self> {
-        fs::create_dir_all(&root)?;
-        let logs = root.join("logs");
-        fs::create_dir_all(&logs)?;
-        Ok(Self {
-            database: database_path_for_root(&root),
-            logs,
-            root,
-        })
+        build_app_paths(root)
     }
+}
+
+fn build_app_paths(root: PathBuf) -> Result<AppPaths> {
+    fs::create_dir_all(&root)?;
+    let database = database_path_for_root(&root);
+    let logs = resolve_logs_dir_for_root(&root, &database)?;
+    fs::create_dir_all(&logs)?;
+    Ok(AppPaths {
+        root,
+        database,
+        logs,
+    })
 }
 
 fn discover_override_root() -> Option<PathBuf> {
@@ -152,25 +162,37 @@ fn discover_override_root() -> Option<PathBuf> {
                 .filter(|value| !value.trim().is_empty())
                 .map(PathBuf::from)
         })
+        .or_else(|| {
+            env::var(OLDER_DATA_DIR_ENV)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from)
+        })
 }
 
 fn resolve_default_root(local_data_dir: PathBuf) -> PathBuf {
     let root = local_data_dir.join(APP_DIR_NAME);
     let legacy_root = local_data_dir.join(LEGACY_APP_DIR_NAME);
-    if root.exists() || !legacy_root.exists() {
+    let older_root = local_data_dir.join(OLDER_APP_DIR_NAME);
+    if root.exists() || (!legacy_root.exists() && !older_root.exists()) {
         root
-    } else {
+    } else if legacy_root.exists() {
         legacy_root
+    } else {
+        older_root
     }
 }
 
 fn database_path_for_root(root: &Path) -> PathBuf {
     let database = root.join(DATABASE_FILE_NAME);
     let legacy_database = root.join(LEGACY_DATABASE_FILE_NAME);
-    if database.exists() || !legacy_database.exists() {
+    let older_database = root.join(OLDER_DATABASE_FILE_NAME);
+    if database.exists() || (!legacy_database.exists() && !older_database.exists()) {
         database
-    } else {
+    } else if legacy_database.exists() {
         legacy_database
+    } else {
+        older_database
     }
 }
 
@@ -178,6 +200,7 @@ pub struct Repository {
     paths: AppPaths,
     db: Mutex<Connection>,
     master_key: RwLock<Option<[u8; 32]>>,
+    last_log_prune_day: Mutex<Option<String>>,
     started_at: String,
     port: u16,
 }
@@ -193,13 +216,16 @@ impl Repository {
         database.execute_batch(SCHEMA)?;
         migrate_schema(&database, &paths.root)?;
         seed_builtin_providers(&database)?;
-        Ok(Self {
+        let repository = Self {
             paths,
             db: Mutex::new(database),
             master_key: RwLock::new(None),
+            last_log_prune_day: Mutex::new(None),
             started_at: timestamp(),
             port: if port == 0 { DEFAULT_PORT } else { port },
-        })
+        };
+        repository.prune_expired_logs_if_needed(None).await?;
+        Ok(repository)
     }
 
     pub async fn health(&self) -> Result<HealthResponse> {
@@ -213,6 +239,16 @@ impl Repository {
         })
     }
 
+    pub async fn app_settings(&self) -> Result<AppSettings> {
+        let db = self.db.lock().await;
+        app_settings_from_db(&db, &self.paths)
+    }
+
+    pub async fn update_app_settings(&self, input: AppSettingsInput) -> Result<AppSettings> {
+        let db = self.db.lock().await;
+        save_app_settings_with_db(&db, &self.paths, &input)
+    }
+
     pub async fn is_initialized(&self) -> Result<bool> {
         let db = self.db.lock().await;
         let salt = get_setting_blob(&db, VAULT_SALT_KEY)?;
@@ -221,7 +257,7 @@ impl Repository {
 
     pub async fn unlock(&self, password: &str) -> Result<UnlockResponse> {
         if password.trim().is_empty() {
-            return Err(LocalOpenRouterError::Validation(
+            return Err(LocalAIRouterError::Validation(
                 "master password must not be empty".into(),
             ));
         }
@@ -259,7 +295,7 @@ impl Repository {
                 }
             }
             _ => {
-                return Err(LocalOpenRouterError::Sqlite(
+                return Err(LocalAIRouterError::Sqlite(
                     "vault metadata is incomplete; delete the database to recover".into(),
                 ));
             }
@@ -286,7 +322,7 @@ impl Repository {
     pub async fn get_provider(&self, slug: &str) -> Result<ProviderDefinition> {
         let db = self.db.lock().await;
         fetch_provider_by_slug(&db, slug)?
-            .ok_or_else(|| LocalOpenRouterError::NotFound(format!("provider `{slug}`")))
+            .ok_or_else(|| LocalAIRouterError::NotFound(format!("provider `{slug}`")))
     }
 
     pub async fn find_provider_by_proxy_path(
@@ -310,7 +346,7 @@ impl Repository {
         let existing = fetch_provider_by_slug(&db, &normalized_slug)?;
         if let Some(other) = fetch_provider_by_proxy_path(&db, &proxy_path)? {
             if other.slug != normalized_slug {
-                return Err(LocalOpenRouterError::Validation(format!(
+                return Err(LocalAIRouterError::Validation(format!(
                     "proxy path `{proxy_path}` is already used by provider `{}`",
                     other.slug
                 )));
@@ -369,9 +405,9 @@ impl Repository {
     pub async fn delete_provider(&self, slug: &str) -> Result<DeleteResponse> {
         let db = self.db.lock().await;
         let provider = fetch_provider_by_slug(&db, slug)?
-            .ok_or_else(|| LocalOpenRouterError::NotFound(format!("provider `{slug}`")))?;
+            .ok_or_else(|| LocalAIRouterError::NotFound(format!("provider `{slug}`")))?;
         if provider.is_builtin {
-            return Err(LocalOpenRouterError::Validation(format!(
+            return Err(LocalAIRouterError::Validation(format!(
                 "built-in provider `{slug}` cannot be deleted"
             )));
         }
@@ -383,10 +419,10 @@ impl Repository {
             )?
             .into_iter()
             .next()
-            .ok_or_else(|| LocalOpenRouterError::Sqlite("failed to count accounts".into()))?
+            .ok_or_else(|| LocalAIRouterError::Sqlite("failed to count accounts".into()))?
             .get_i64("count")?;
         if account_count > 0 {
-            return Err(LocalOpenRouterError::Validation(format!(
+            return Err(LocalAIRouterError::Validation(format!(
                 "provider `{slug}` still has {account_count} account(s)"
             )));
         }
@@ -398,10 +434,10 @@ impl Repository {
             )?
             .into_iter()
             .next()
-            .ok_or_else(|| LocalOpenRouterError::Sqlite("failed to count routes".into()))?
+            .ok_or_else(|| LocalAIRouterError::Sqlite("failed to count routes".into()))?
             .get_i64("count")?;
         if route_count > 0 {
-            return Err(LocalOpenRouterError::Validation(format!(
+            return Err(LocalAIRouterError::Validation(format!(
                 "provider `{slug}` still has {route_count} route(s)"
             )));
         }
@@ -436,9 +472,9 @@ impl Repository {
 
         let db = self.db.lock().await;
         let provider = fetch_provider_by_slug(&db, &provider_slug)?
-            .ok_or_else(|| LocalOpenRouterError::NotFound(format!("provider `{provider_slug}`")))?;
+            .ok_or_else(|| LocalAIRouterError::NotFound(format!("provider `{provider_slug}`")))?;
         if !provider.enabled {
-            return Err(LocalOpenRouterError::Validation(format!(
+            return Err(LocalAIRouterError::Validation(format!(
                 "provider `{provider_slug}` is disabled"
             )));
         }
@@ -479,7 +515,7 @@ impl Repository {
             Some(api_key) => {
                 let api_key = api_key.trim();
                 if api_key.is_empty() {
-                    return Err(LocalOpenRouterError::Validation(
+                    return Err(LocalAIRouterError::Validation(
                         "API key must not be empty when provided".into(),
                     ));
                 }
@@ -500,7 +536,7 @@ impl Repository {
                 )?;
             }
             None if existing.is_empty() => {
-                return Err(LocalOpenRouterError::Validation(
+                return Err(LocalAIRouterError::Validation(
                     "new accounts require an API key".into(),
                 ));
             }
@@ -518,7 +554,7 @@ impl Repository {
         password: &str,
     ) -> Result<RevealedSecret> {
         if password.trim().is_empty() {
-            return Err(LocalOpenRouterError::Validation(
+            return Err(LocalAIRouterError::Validation(
                 "master password must not be empty".into(),
             ));
         }
@@ -531,7 +567,7 @@ impl Repository {
             )?
             .into_iter()
             .next()
-            .ok_or_else(|| LocalOpenRouterError::NotFound(format!("account `{account_id}`")))?;
+            .ok_or_else(|| LocalAIRouterError::NotFound(format!("account `{account_id}`")))?;
         let account_id = row.get_text("id")?;
         let key = master_key_from_password(&db, password)?;
         let api_key = decrypt_account_secret(&db, &account_id, &key)?;
@@ -553,7 +589,7 @@ impl Repository {
             )?
             .into_iter()
             .next()
-            .ok_or_else(|| LocalOpenRouterError::NotFound(format!("account `{id}`")))?;
+            .ok_or_else(|| LocalAIRouterError::NotFound(format!("account `{id}`")))?;
         account_from_row(row)
     }
 
@@ -640,7 +676,7 @@ impl Repository {
     pub async fn query_logs(&self, query: LogQuery) -> Result<Vec<RequestLog>> {
         let mut sql = String::from(
             "SELECT id, created_at, provider, session_id, model, account_id, method, path, status_code,
-             duration_ms, error_text, '' AS request_headers, '' AS request_body,
+             duration_ms, error_text, total_tokens, '' AS request_headers, '' AS request_body,
              '' AS response_headers, '' AS response_body, log_file_path, streamed
              FROM request_logs WHERE 1 = 1",
         );
@@ -661,12 +697,152 @@ impl Repository {
             sql.push_str(" AND status_code = ?");
             params.push(SqlValue::Integer(i64::from(status_code)));
         }
-        sql.push_str(" ORDER BY created_at DESC LIMIT ?");
-        params.push(SqlValue::Integer(i64::from(query.limit.unwrap_or(50))));
+        if let Some(created_from) = query.created_from {
+            sql.push_str(" AND datetime(created_at) >= datetime(?)");
+            params.push(SqlValue::Text(created_from));
+        }
+        if let Some(created_to) = query.created_to {
+            sql.push_str(" AND datetime(created_at) < datetime(?)");
+            params.push(SqlValue::Text(created_to));
+        }
+        sql.push_str(" ORDER BY created_at DESC");
+        if let Some(limit) = query.limit {
+            sql.push_str(" LIMIT ?");
+            params.push(SqlValue::Integer(i64::from(limit)));
+        }
 
         let db = self.db.lock().await;
         let rows = db.query(sql.as_str(), &params)?;
         rows.into_iter().map(log_from_row).collect()
+    }
+
+    pub async fn query_daily_stats(&self, query: DailyStatsQuery) -> Result<Vec<DailyStatsPoint>> {
+        let days = query.days.unwrap_or(30).clamp(1, 365);
+        let utc_offset_minutes = query.utc_offset_minutes.unwrap_or(0).clamp(-840, 840);
+        let offset = Duration::minutes(i64::from(utc_offset_minutes));
+        let now_local = Utc::now() + offset;
+        let end_day = now_local.date_naive();
+        let start_day = end_day - Duration::days(i64::from(days.saturating_sub(1)));
+        let start_utc = start_day
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| LocalAIRouterError::Message("invalid stats start day".into()))?
+            - offset;
+        let end_utc = (end_day + Duration::days(1))
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| LocalAIRouterError::Message("invalid stats end day".into()))?
+            - offset;
+        let modifier = if utc_offset_minutes >= 0 {
+            format!("+{utc_offset_minutes} minutes")
+        } else {
+            format!("{utc_offset_minutes} minutes")
+        };
+
+        let db = self.db.lock().await;
+        let rows = db.query(
+            "SELECT date(datetime(created_at), ?) AS day,
+                    COUNT(*) AS request_count,
+                    SUM(CASE WHEN status_code IS NOT NULL AND status_code < 400 THEN 1 ELSE 0 END) AS success_count,
+                    SUM(total_tokens) AS total_tokens
+             FROM request_logs
+             WHERE datetime(created_at) >= datetime(?)
+               AND datetime(created_at) < datetime(?)
+             GROUP BY day
+             ORDER BY day",
+            &[
+                SqlValue::Text(modifier),
+                SqlValue::Text(start_utc.and_utc().to_rfc3339()),
+                SqlValue::Text(end_utc.and_utc().to_rfc3339()),
+            ],
+        )?;
+        rows.into_iter().map(daily_stats_from_row).collect()
+    }
+
+    pub async fn rebuild_total_tokens(&self) -> Result<TokenRebuildReport> {
+        let rows = {
+            let db = self.db.lock().await;
+            db.query(
+                "SELECT id, total_tokens, response_body, response_body_path, log_file_path
+                 FROM request_logs
+                 ORDER BY created_at ASC",
+                &[],
+            )?
+        };
+
+        let mut file_groups: BTreeMap<String, Vec<RebuildCandidate>> = BTreeMap::new();
+        let mut inline_rows = Vec::new();
+
+        for row in rows {
+            let candidate = RebuildCandidate {
+                id: row.get_text("id")?,
+                current_total: row.get_optional_i64("total_tokens")?.unwrap_or(0) as u64,
+                response_body: row.get_text("response_body")?,
+                response_body_path: row.get_optional_text("response_body_path")?,
+                log_file_path: row.get_optional_text("log_file_path")?,
+            };
+            if let Some(log_file_path) = candidate.log_file_path.clone() {
+                file_groups.entry(log_file_path).or_default().push(candidate);
+            } else {
+                inline_rows.push(candidate);
+            }
+        }
+
+        let mut computed = Vec::new();
+        let mut skipped_logs = 0_u64;
+
+        for (log_file_path, candidates) in file_groups {
+            let token_map = rebuild_log_totals_from_file(&self.paths, &log_file_path, &candidates)?;
+            for candidate in candidates {
+                if let Some(total_tokens) = token_map.get(candidate.id.as_str()).copied() {
+                    computed.push((candidate.id, candidate.current_total, total_tokens));
+                } else {
+                    skipped_logs += 1;
+                }
+            }
+        }
+
+        for candidate in inline_rows {
+            let response_body = read_log_artifact(
+                &self.paths,
+                candidate.response_body_path.clone(),
+                candidate.response_body.clone(),
+            )?;
+            let total_tokens = extract_total_tokens(&response_body).unwrap_or(candidate.current_total);
+            computed.push((candidate.id, candidate.current_total, total_tokens));
+        }
+
+        let rebuilt_logs = computed.len() as u64;
+        let updated_logs = computed
+            .iter()
+            .filter(|(_, current_total, next_total)| current_total != next_total)
+            .count() as u64;
+
+        let db = self.db.lock().await;
+        db.execute_batch("BEGIN IMMEDIATE;")?;
+        let update_result = (|| -> Result<()> {
+            for (id, _, total_tokens) in &computed {
+                db.execute(
+                    "UPDATE request_logs SET total_tokens = ? WHERE id = ?",
+                    &[
+                        SqlValue::Integer(*total_tokens as i64),
+                        SqlValue::Text(id.clone()),
+                    ],
+                )?;
+            }
+            mark_total_tokens_version(&db)?;
+            db.execute_batch("COMMIT;")?;
+            Ok(())
+        })();
+        if let Err(error) = update_result {
+            let _ = db.execute_batch("ROLLBACK;");
+            return Err(error);
+        }
+
+        Ok(TokenRebuildReport {
+            total_logs: rebuilt_logs + skipped_logs,
+            rebuilt_logs,
+            updated_logs,
+            skipped_logs,
+        })
     }
 
     pub async fn get_log(&self, id: &str) -> Result<RequestLog> {
@@ -674,7 +850,7 @@ impl Repository {
         let row = db
             .query(
                 "SELECT id, created_at, provider, session_id, model, account_id, method, path, status_code,
-                 duration_ms, error_text, request_headers, request_body, response_headers,
+                 duration_ms, error_text, total_tokens, request_headers, request_body, response_headers,
                  response_body, log_file_path, streamed, request_headers_path, request_body_path,
                  response_headers_path, response_body_path
                  FROM request_logs WHERE id = ?",
@@ -682,11 +858,12 @@ impl Repository {
             )?
             .into_iter()
             .next()
-            .ok_or_else(|| LocalOpenRouterError::NotFound(format!("log `{id}`")))?;
-        log_detail_from_row(row, &self.paths.root)
+            .ok_or_else(|| LocalAIRouterError::NotFound(format!("log `{id}`")))?;
+        log_detail_from_row(row, &self.paths)
     }
 
     pub async fn insert_log(&self, input: RequestLogInput) -> Result<RequestLog> {
+        self.prune_expired_logs_if_needed(None).await?;
         let id = Uuid::new_v4().to_string();
         let created_at = timestamp();
         let status_code = input.status_code.map(i64::from);
@@ -697,15 +874,19 @@ impl Repository {
             &input.response_body,
         );
         let record = StoredLogRecord::from_input(&id, &created_at, session_id.clone(), &input);
-        let log_file_path = append_log_record(&self.paths.root, &record)?;
+        let log_file_path = {
+            let db = self.db.lock().await;
+            let logs_dir = resolve_logs_dir_from_db(&db, &self.paths.root)?;
+            append_log_record(&logs_dir, &record)?
+        };
         let db = self.db.lock().await;
         db.execute(
             "INSERT INTO request_logs (
                id, created_at, provider, session_id, model, account_id, method, path,
-               status_code, duration_ms, error_text, request_headers, request_body,
+               status_code, duration_ms, error_text, total_tokens, request_headers, request_body,
                response_headers, response_body, request_headers_path, request_body_path,
                response_headers_path, response_body_path, log_file_path, streamed
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             &[
                 SqlValue::Text(id.clone()),
                 SqlValue::Text(created_at.clone()),
@@ -733,6 +914,7 @@ impl Repository {
                     .clone()
                     .map(SqlValue::Text)
                     .unwrap_or(SqlValue::Null),
+                SqlValue::Integer(record.total_tokens as i64),
                 SqlValue::Text(String::new()),
                 SqlValue::Text(String::new()),
                 SqlValue::Text(String::new()),
@@ -757,6 +939,7 @@ impl Repository {
             status_code: input.status_code,
             duration_ms: input.duration_ms,
             error_text: input.error_text,
+            total_tokens: record.total_tokens,
             request_headers: input.request_headers,
             request_body: input.request_body,
             response_headers: input.response_headers,
@@ -764,6 +947,28 @@ impl Repository {
             log_file_path: Some(log_file_path),
             streamed: input.streamed,
         })
+    }
+
+    async fn prune_expired_logs_if_needed(
+        &self,
+        now_override: Option<chrono::DateTime<Utc>>,
+    ) -> Result<()> {
+        let now = now_override.unwrap_or_else(Utc::now);
+        let prune_day = now.date_naive().to_string();
+        {
+            let last_prune_day = self.last_log_prune_day.lock().await;
+            if last_prune_day.as_deref() == Some(prune_day.as_str()) {
+                return Ok(());
+            }
+        }
+
+        let db = self.db.lock().await;
+        prune_expired_logs(&db, &self.paths, now)?;
+        drop(db);
+
+        let mut last_prune_day = self.last_log_prune_day.lock().await;
+        *last_prune_day = Some(prune_day);
+        Ok(())
     }
 
     pub async fn resolve_account(
@@ -774,9 +979,9 @@ impl Repository {
         let key = self.require_master_key().await?;
         let db = self.db.lock().await;
         let provider = fetch_provider_by_slug(&db, provider_slug)?
-            .ok_or_else(|| LocalOpenRouterError::NotFound(format!("provider `{provider_slug}`")))?;
+            .ok_or_else(|| LocalAIRouterError::NotFound(format!("provider `{provider_slug}`")))?;
         if !provider.enabled {
-            return Err(LocalOpenRouterError::Validation(format!(
+            return Err(LocalAIRouterError::Validation(format!(
                 "provider `{provider_slug}` is disabled"
             )));
         }
@@ -798,14 +1003,14 @@ impl Repository {
             .into_iter()
             .next()
             .ok_or_else(|| {
-                LocalOpenRouterError::NotFound(format!(
+                LocalAIRouterError::NotFound(format!(
                     "selected account `{}` for provider `{provider_slug}`",
                     selected.account_id
                 ))
             })?;
         let account = account_from_row(account)?;
         if !account.enabled {
-            return Err(LocalOpenRouterError::Validation(format!(
+            return Err(LocalAIRouterError::Validation(format!(
                 "selected account `{}` is disabled",
                 account.name
             )));
@@ -827,7 +1032,7 @@ impl Repository {
             "codex" => "codex",
             "claude-code" => "claude-code",
             other => {
-                return Err(LocalOpenRouterError::NotFound(format!(
+                return Err(LocalAIRouterError::NotFound(format!(
                     "unsupported onboarding target `{other}`"
                 )));
             }
@@ -842,13 +1047,45 @@ impl Repository {
             .await
             .as_ref()
             .copied()
-            .ok_or(LocalOpenRouterError::Locked)
+            .ok_or(LocalAIRouterError::Locked)
     }
+}
+
+pub fn load_app_settings(paths: &AppPaths) -> Result<AppSettings> {
+    if !paths.database.exists() {
+        return Ok(default_app_settings(paths));
+    }
+    let db = Connection::open(&paths.database)?;
+    if !table_exists(&db, "app_settings")? {
+        return Ok(default_app_settings(paths));
+    }
+    app_settings_from_db(&db, paths)
+}
+
+pub fn save_app_settings(paths: &AppPaths, input: &AppSettingsInput) -> Result<AppSettings> {
+    let db = open_settings_db(&paths.database)?;
+    save_app_settings_with_db(&db, paths, input)
+}
+
+fn open_settings_db(database_path: &Path) -> Result<Connection> {
+    if let Some(parent) = database_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let db = Connection::open(database_path)?;
+    db.execute_batch(SCHEMA)?;
+    migrate_schema(
+        &db,
+        database_path
+            .parent()
+            .ok_or_else(|| LocalAIRouterError::Io("missing database parent directory".into()))?,
+    )?;
+    seed_builtin_providers(&db)?;
+    Ok(db)
 }
 
 fn validate_account_input(input: &AccountInput) -> Result<()> {
     if input.name.trim().is_empty() {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "account name must not be empty".into(),
         ));
     }
@@ -865,14 +1102,14 @@ fn validate_route_account(db: &Connection, provider_slug: &str, account_id: &str
         )?
         .into_iter()
         .next()
-        .ok_or_else(|| LocalOpenRouterError::NotFound(format!("account `{account_id}`")))?;
+        .ok_or_else(|| LocalAIRouterError::NotFound(format!("account `{account_id}`")))?;
     if row.get_text("provider")? != provider_slug {
-        return Err(LocalOpenRouterError::Validation(format!(
+        return Err(LocalAIRouterError::Validation(format!(
             "account `{account_id}` does not belong to provider `{provider_slug}`"
         )));
     }
     if row.get_i64("enabled")? == 0 {
-        return Err(LocalOpenRouterError::Validation(format!(
+        return Err(LocalAIRouterError::Validation(format!(
             "account `{account_id}` is disabled"
         )));
     }
@@ -966,7 +1203,7 @@ fn pick_route(provider_slug: &str, model: Option<&str>, routes: Vec<Row>) -> Res
         .into_iter()
         .find(|binding| binding.model_prefix.is_none())
         .ok_or_else(|| {
-            LocalOpenRouterError::NotFound(format!("default route for provider `{provider_slug}`"))
+            LocalAIRouterError::NotFound(format!("default route for provider `{provider_slug}`"))
         })
 }
 
@@ -1025,6 +1262,7 @@ fn log_from_row(row: Row) -> Result<RequestLog> {
             .map(|value| value as u16),
         duration_ms: row.get_i64("duration_ms")? as u64,
         error_text: row.get_optional_text("error_text")?,
+        total_tokens: row.get_optional_i64("total_tokens")?.unwrap_or(0) as u64,
         request_headers: row.get_text("request_headers")?,
         request_body: row.get_text("request_body")?,
         response_headers: row.get_text("response_headers")?,
@@ -1034,7 +1272,7 @@ fn log_from_row(row: Row) -> Result<RequestLog> {
     })
 }
 
-fn log_detail_from_row(row: Row, root: &Path) -> Result<RequestLog> {
+fn log_detail_from_row(row: Row, paths: &AppPaths) -> Result<RequestLog> {
     let id = row.get_text("id")?;
     let created_at = row.get_text("created_at")?;
     let provider = row.get_text("provider")?;
@@ -1048,32 +1286,33 @@ fn log_detail_from_row(row: Row, root: &Path) -> Result<RequestLog> {
         .map(|value| value as u16);
     let duration_ms = row.get_i64("duration_ms")? as u64;
     let error_text = row.get_optional_text("error_text")?;
+    let total_tokens = row.get_optional_i64("total_tokens")?.unwrap_or(0) as u64;
     let streamed = row.get_i64("streamed")? != 0;
     let log_file_path = normalize_optional(row.get_optional_text("log_file_path")?);
 
     if let Some(file_path) = log_file_path.clone() {
-        if let Some(log) = read_log_record(root, &file_path, &id)? {
+        if let Some(log) = read_log_record(paths, &file_path, &id)? {
             return Ok(log);
         }
     }
 
     let request_headers = read_log_artifact(
-        root,
+        paths,
         row.get_optional_text("request_headers_path")?,
         row.get_text("request_headers")?,
     )?;
     let request_body = read_log_artifact(
-        root,
+        paths,
         row.get_optional_text("request_body_path")?,
         row.get_text("request_body")?,
     )?;
     let response_headers = read_log_artifact(
-        root,
+        paths,
         row.get_optional_text("response_headers_path")?,
         row.get_text("response_headers")?,
     )?;
     let response_body = read_log_artifact(
-        root,
+        paths,
         row.get_optional_text("response_body_path")?,
         row.get_text("response_body")?,
     )?;
@@ -1090,12 +1329,22 @@ fn log_detail_from_row(row: Row, root: &Path) -> Result<RequestLog> {
         status_code,
         duration_ms,
         error_text,
+        total_tokens,
         request_headers,
         request_body,
         response_headers,
         response_body,
         log_file_path,
         streamed,
+    })
+}
+
+fn daily_stats_from_row(row: Row) -> Result<DailyStatsPoint> {
+    Ok(DailyStatsPoint {
+        day: row.get_text("day")?,
+        request_count: row.get_i64("request_count")? as u64,
+        success_count: row.get_optional_i64("success_count")?.unwrap_or(0) as u64,
+        total_tokens: row.get_optional_i64("total_tokens")?.unwrap_or(0) as u64,
     })
 }
 
@@ -1147,6 +1396,8 @@ struct StoredLogRecord {
     status_code: Option<u16>,
     duration_ms: u64,
     error_text: Option<String>,
+    #[serde(default)]
+    total_tokens: u64,
     request: StoredLogPart,
     response: StoredLogPart,
     streamed: bool,
@@ -1171,6 +1422,7 @@ impl StoredLogRecord {
             status_code: input.status_code,
             duration_ms: input.duration_ms,
             error_text: input.error_text.clone(),
+            total_tokens: extract_total_tokens(&input.response_body).unwrap_or(0),
             request: StoredLogPart {
                 headers: headers_to_json_value(&input.request_headers),
                 body: input.request_body.clone(),
@@ -1198,6 +1450,7 @@ impl StoredLogRecord {
             status_code: self.status_code,
             duration_ms: self.duration_ms,
             error_text: self.error_text,
+            total_tokens: self.total_tokens,
             request_headers,
             request_body: self.request.body,
             response_headers,
@@ -1211,6 +1464,12 @@ impl StoredLogRecord {
 fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
     ensure_column(db, "accounts", "base_url", "TEXT")?;
     ensure_column(db, "request_logs", "session_id", "TEXT")?;
+    ensure_column(
+        db,
+        "request_logs",
+        "total_tokens",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     ensure_column(db, "request_logs", "log_file_path", "TEXT")?;
     ensure_column(db, "request_logs", "request_headers_path", "TEXT")?;
     ensure_column(db, "request_logs", "request_body_path", "TEXT")?;
@@ -1222,10 +1481,16 @@ fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
     migrate_builtin_provider_catalog(db)?;
     retire_legacy_builtin_custom_provider(db)?;
     migrate_request_logs(db, root)?;
+    mark_total_tokens_version(db)?;
     Ok(())
 }
 
-fn ensure_column(db: &Connection, table: &str, column: &str, definition: &str) -> Result<()> {
+fn ensure_column(
+    db: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<bool> {
     let pragma = format!("PRAGMA table_info({table})");
     let exists = db.query(pragma.as_str(), &[])?.into_iter().any(|row| {
         row.get_text("name")
@@ -1235,8 +1500,9 @@ fn ensure_column(db: &Connection, table: &str, column: &str, definition: &str) -
     if !exists {
         let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {definition}");
         db.execute_batch(sql.as_str())?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 fn migrate_builtin_provider_catalog(db: &Connection) -> Result<()> {
@@ -1261,7 +1527,7 @@ fn retire_legacy_builtin_custom_provider(db: &Connection) -> Result<()> {
         )?
         .into_iter()
         .next()
-        .ok_or_else(|| LocalOpenRouterError::Sqlite("failed to count custom accounts".into()))?
+        .ok_or_else(|| LocalAIRouterError::Sqlite("failed to count custom accounts".into()))?
         .get_i64("count")?;
     let route_count = db
         .query(
@@ -1270,7 +1536,7 @@ fn retire_legacy_builtin_custom_provider(db: &Connection) -> Result<()> {
         )?
         .into_iter()
         .next()
-        .ok_or_else(|| LocalOpenRouterError::Sqlite("failed to count custom routes".into()))?
+        .ok_or_else(|| LocalAIRouterError::Sqlite("failed to count custom routes".into()))?
         .get_i64("count")?;
 
     let is_default_stub = provider.display_name == "Custom"
@@ -1368,9 +1634,8 @@ fn migrate_builtin_provider_slug(db: &Connection, rename: BuiltinProviderRename)
     Ok(())
 }
 
-fn append_log_record(root: &Path, record: &StoredLogRecord) -> Result<String> {
-    let relative_path = daily_log_relative_path(&record.created_at);
-    let absolute_path = root.join(&relative_path);
+fn append_log_record(logs_dir: &Path, record: &StoredLogRecord) -> Result<String> {
+    let absolute_path = daily_log_absolute_path(logs_dir, &record.created_at);
     if let Some(parent) = absolute_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1379,15 +1644,76 @@ fn append_log_record(root: &Path, record: &StoredLogRecord) -> Result<String> {
         .append(true)
         .open(&absolute_path)?;
     serde_json::to_writer(&mut file, record).map_err(|error| {
-        LocalOpenRouterError::Io(format!("failed to serialize log record: {error}"))
+        LocalAIRouterError::Io(format!("failed to serialize log record: {error}"))
     })?;
     file.write_all(b"\n")?;
-    Ok(relative_path)
+    Ok(absolute_path.to_string_lossy().into_owned())
 }
 
-fn read_log_artifact(root: &Path, path: Option<String>, fallback: String) -> Result<String> {
+fn prune_expired_logs(db: &Connection, paths: &AppPaths, now: chrono::DateTime<Utc>) -> Result<()> {
+    let retention_days = get_setting_text(db, APP_SETTING_LOG_RETENTION_DAYS_KEY)?
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|days| *days > 0)
+        .unwrap_or(DEFAULT_LOG_RETENTION_DAYS);
+    let cutoff_start = log_retention_cutoff_start(now, retention_days);
+    let cutoff_text = cutoff_start.to_rfc3339();
+    db.execute(
+        "DELETE FROM request_logs WHERE created_at < ?",
+        &[SqlValue::Text(cutoff_text)],
+    )?;
+    prune_expired_log_files(&paths.logs, cutoff_start.date_naive())?;
+    Ok(())
+}
+
+fn log_retention_cutoff_start(
+    now: chrono::DateTime<Utc>,
+    retention_days: u32,
+) -> chrono::DateTime<Utc> {
+    let keep_days = retention_days.saturating_sub(1) as i64;
+    let cutoff_day = now
+        .date_naive()
+        .checked_sub_signed(Duration::days(keep_days))
+        .unwrap_or_else(|| now.date_naive());
+    cutoff_day
+        .and_hms_opt(0, 0, 0)
+        .expect("midnight should be valid")
+        .and_utc()
+}
+
+fn prune_expired_log_files(logs_dir: &Path, cutoff_day: NaiveDate) -> Result<()> {
+    let entries = match fs::read_dir(logs_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(day) = parse_daily_log_day(file_name) else {
+            continue;
+        };
+        if day < cutoff_day {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_daily_log_day(file_name: &str) -> Option<NaiveDate> {
+    file_name
+        .strip_suffix(".jsonl")
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok())
+}
+
+fn read_log_artifact(paths: &AppPaths, path: Option<String>, fallback: String) -> Result<String> {
     if let Some(path) = normalize_optional(path) {
-        match fs::read_to_string(root.join(path)) {
+        match fs::read_to_string(resolve_log_storage_path(paths, &path)) {
             Ok(value) => return Ok(value),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
@@ -1396,8 +1722,8 @@ fn read_log_artifact(root: &Path, path: Option<String>, fallback: String) -> Res
     Ok(fallback)
 }
 
-fn read_log_record(root: &Path, log_file_path: &str, id: &str) -> Result<Option<RequestLog>> {
-    let file = match fs::File::open(root.join(log_file_path)) {
+fn read_log_record(paths: &AppPaths, log_file_path: &str, id: &str) -> Result<Option<RequestLog>> {
+    let file = match fs::File::open(resolve_log_storage_path(paths, log_file_path)) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
@@ -1419,11 +1745,71 @@ fn read_log_record(root: &Path, log_file_path: &str, id: &str) -> Result<Option<
     Ok(None)
 }
 
+fn rebuild_log_totals_from_file(
+    paths: &AppPaths,
+    log_file_path: &str,
+    candidates: &[RebuildCandidate],
+) -> Result<HashMap<String, u64>> {
+    let file = match fs::File::open(resolve_log_storage_path(paths, log_file_path)) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut pending = HashSet::new();
+    let mut fallback_totals = HashMap::new();
+    for candidate in candidates {
+        pending.insert(candidate.id.clone());
+        fallback_totals.insert(candidate.id.clone(), candidate.current_total);
+    }
+    let mut totals = HashMap::new();
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: StoredLogRecord = match serde_json::from_str(&line) {
+            Ok(record) => record,
+            Err(_) => continue,
+        };
+        if !pending.contains(record.id.as_str()) {
+            continue;
+        }
+        let total_tokens =
+            extract_total_tokens(&record.response.body).unwrap_or(record.total_tokens);
+        totals.insert(record.id.clone(), total_tokens);
+        pending.remove(record.id.as_str());
+        if pending.is_empty() {
+            break;
+        }
+    }
+    for id in pending {
+        if let Some(total_tokens) = fallback_totals.get(id.as_str()).copied() {
+            totals.insert(id, total_tokens);
+        }
+    }
+    Ok(totals)
+}
+
+#[derive(Debug, Clone)]
+struct RebuildCandidate {
+    id: String,
+    current_total: u64,
+    response_body: String,
+    response_body_path: Option<String>,
+    log_file_path: Option<String>,
+}
+
 fn migrate_request_logs(db: &Connection, root: &Path) -> Result<()> {
+    let paths = AppPaths {
+        root: root.to_path_buf(),
+        database: database_path_for_root(root),
+        logs: resolve_logs_dir_from_db(db, root)?,
+    };
     let rows = db.query(
         "SELECT id, created_at, provider, session_id, model, account_id, method, path, status_code,
          duration_ms, error_text, request_headers, request_body, response_headers, response_body,
-         log_file_path, request_headers_path, request_body_path, response_headers_path,
+         total_tokens, log_file_path, request_headers_path, request_body_path, response_headers_path,
          response_body_path, streamed
          FROM request_logs
          WHERE log_file_path IS NULL",
@@ -1448,22 +1834,22 @@ fn migrate_request_logs(db: &Connection, root: &Path) -> Result<()> {
         let response_headers = row.get_text("response_headers")?;
         let response_body = row.get_text("response_body")?;
         let request_headers = read_log_artifact(
-            root,
+            &paths,
             row.get_optional_text("request_headers_path")?,
             request_headers,
         )?;
         let request_body = read_log_artifact(
-            root,
+            &paths,
             row.get_optional_text("request_body_path")?,
             request_body,
         )?;
         let response_headers = read_log_artifact(
-            root,
+            &paths,
             row.get_optional_text("response_headers_path")?,
             response_headers,
         )?;
         let response_body = read_log_artifact(
-            root,
+            &paths,
             row.get_optional_text("response_body_path")?,
             response_body,
         )?;
@@ -1487,6 +1873,9 @@ fn migrate_request_logs(db: &Connection, root: &Path) -> Result<()> {
             status_code,
             duration_ms,
             error_text,
+            total_tokens: extract_total_tokens(&response_body)
+                .or_else(|| row.get_optional_i64("total_tokens").ok().flatten().map(|value| value as u64))
+                .unwrap_or(0),
             request: StoredLogPart {
                 headers: headers_to_json_value(&request_headers),
                 body: request_body,
@@ -1497,10 +1886,11 @@ fn migrate_request_logs(db: &Connection, root: &Path) -> Result<()> {
             },
             streamed: row.get_i64("streamed")? != 0,
         };
-        let log_file_path = append_log_record(root, &record)?;
+        let log_file_path = append_log_record(&paths.logs, &record)?;
         db.execute(
             "UPDATE request_logs
              SET session_id = ?,
+                 total_tokens = ?,
                  request_headers = '',
                  request_body = '',
                  response_headers = '',
@@ -1509,6 +1899,7 @@ fn migrate_request_logs(db: &Connection, root: &Path) -> Result<()> {
              WHERE id = ?",
             &[
                 session_id.map(SqlValue::Text).unwrap_or(SqlValue::Null),
+                SqlValue::Integer(record.total_tokens as i64),
                 SqlValue::Text(log_file_path),
                 SqlValue::Text(id),
             ],
@@ -1518,12 +1909,41 @@ fn migrate_request_logs(db: &Connection, root: &Path) -> Result<()> {
     Ok(())
 }
 
+fn mark_total_tokens_version(db: &Connection) -> Result<()> {
+    upsert_setting_text(
+        db,
+        APP_SETTING_TOTAL_TOKENS_VERSION_KEY,
+        CURRENT_TOTAL_TOKENS_VERSION,
+    )?;
+
+    Ok(())
+}
+
+#[cfg(test)]
 fn daily_log_relative_path(created_at: &str) -> String {
     let day = created_at.get(..10).unwrap_or("undated");
     PathBuf::from("logs")
         .join(format!("{day}.jsonl"))
         .to_string_lossy()
         .into_owned()
+}
+
+fn daily_log_absolute_path(logs_dir: &Path, created_at: &str) -> PathBuf {
+    let day = created_at.get(..10).unwrap_or("undated");
+    logs_dir.join(format!("{day}.jsonl"))
+}
+
+fn resolve_log_storage_path(paths: &AppPaths, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        return candidate;
+    }
+    let legacy_path = paths.root.join(path);
+    if legacy_path.exists() || path.starts_with("logs/") || path.starts_with("logs\\") {
+        legacy_path
+    } else {
+        paths.logs.join(path)
+    }
 }
 
 fn headers_to_json_value(headers: &str) -> serde_json::Value {
@@ -1566,6 +1986,168 @@ fn seed_builtin_providers(db: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn app_settings_from_db(db: &Connection, paths: &AppPaths) -> Result<AppSettings> {
+    let default_logs_dir = default_logs_dir_for_root(&paths.root);
+    let logs_dir = resolve_logs_dir_from_db(db, &paths.root)?;
+    let daemon_port = get_setting_text(db, APP_SETTING_DAEMON_PORT_KEY)?
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(DEFAULT_PORT);
+    let monitor_buffer_limit = get_setting_text(db, APP_SETTING_MONITOR_BUFFER_LIMIT_KEY)?
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(DEFAULT_MONITOR_BUFFER_LIMIT);
+    let log_retention_days = get_setting_text(db, APP_SETTING_LOG_RETENTION_DAYS_KEY)?
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|days| *days > 0)
+        .unwrap_or(DEFAULT_LOG_RETENTION_DAYS);
+    Ok(AppSettings {
+        daemon_port,
+        monitor_buffer_limit,
+        log_retention_days,
+        logs_dir: logs_dir.to_string_lossy().into_owned(),
+        default_logs_dir: default_logs_dir.to_string_lossy().into_owned(),
+        data_root: paths.root.to_string_lossy().into_owned(),
+        database_path: paths.database.to_string_lossy().into_owned(),
+    })
+}
+
+fn default_app_settings(paths: &AppPaths) -> AppSettings {
+    AppSettings {
+        daemon_port: DEFAULT_PORT,
+        monitor_buffer_limit: DEFAULT_MONITOR_BUFFER_LIMIT,
+        log_retention_days: DEFAULT_LOG_RETENTION_DAYS,
+        logs_dir: default_logs_dir_for_root(&paths.root)
+            .to_string_lossy()
+            .into_owned(),
+        default_logs_dir: default_logs_dir_for_root(&paths.root)
+            .to_string_lossy()
+            .into_owned(),
+        data_root: paths.root.to_string_lossy().into_owned(),
+        database_path: paths.database.to_string_lossy().into_owned(),
+    }
+}
+
+fn save_app_settings_with_db(
+    db: &Connection,
+    paths: &AppPaths,
+    input: &AppSettingsInput,
+) -> Result<AppSettings> {
+    if input.daemon_port == 0 {
+        return Err(LocalAIRouterError::Validation(
+            "daemon port must be between 1 and 65535".into(),
+        ));
+    }
+    if input.monitor_buffer_limit == 0 {
+        return Err(LocalAIRouterError::Validation(
+            "monitor buffer limit must be greater than 0".into(),
+        ));
+    }
+    if input.log_retention_days == 0 {
+        return Err(LocalAIRouterError::Validation(
+            "log retention days must be greater than 0".into(),
+        ));
+    }
+    let logs_dir = normalize_logs_dir_setting(&paths.root, input.logs_dir.clone())?;
+    fs::create_dir_all(&logs_dir)?;
+    upsert_setting_text(
+        db,
+        APP_SETTING_DAEMON_PORT_KEY,
+        &input.daemon_port.to_string(),
+    )?;
+    upsert_setting_text(
+        db,
+        APP_SETTING_MONITOR_BUFFER_LIMIT_KEY,
+        &input.monitor_buffer_limit.to_string(),
+    )?;
+    upsert_setting_text(
+        db,
+        APP_SETTING_LOG_RETENTION_DAYS_KEY,
+        &input.log_retention_days.to_string(),
+    )?;
+    upsert_setting_text(db, APP_SETTING_LOGS_DIR_KEY, &logs_dir.to_string_lossy())?;
+    app_settings_from_db(db, paths)
+}
+
+fn default_logs_dir_for_root(root: &Path) -> PathBuf {
+    root.join("logs")
+}
+
+fn resolve_logs_dir_for_root(root: &Path, database: &Path) -> Result<PathBuf> {
+    if !database.exists() {
+        return Ok(default_logs_dir_for_root(root));
+    }
+    match read_setting_text_from_database(database, APP_SETTING_LOGS_DIR_KEY)? {
+        Some(value) => normalize_logs_dir_setting(root, Some(value)),
+        None => Ok(default_logs_dir_for_root(root)),
+    }
+}
+
+fn resolve_logs_dir_from_db(db: &Connection, root: &Path) -> Result<PathBuf> {
+    let stored = get_setting_text(db, APP_SETTING_LOGS_DIR_KEY)?;
+    normalize_logs_dir_setting(root, stored)
+}
+
+fn normalize_logs_dir_setting(root: &Path, value: Option<String>) -> Result<PathBuf> {
+    match normalize_optional(value) {
+        Some(value) => {
+            let path = PathBuf::from(value);
+            if path.is_absolute() {
+                Ok(path)
+            } else {
+                Ok(root.join(path))
+            }
+        }
+        None => Ok(default_logs_dir_for_root(root)),
+    }
+}
+
+fn get_setting_text(db: &Connection, key: &str) -> Result<Option<String>> {
+    Ok(db
+        .query(
+            "SELECT value_text FROM app_settings WHERE key = ?",
+            &[SqlValue::Text(key.into())],
+        )?
+        .into_iter()
+        .next()
+        .map(|row| row.get_optional_text("value_text"))
+        .transpose()?
+        .flatten())
+}
+
+fn upsert_setting_text(db: &Connection, key: &str, value: &str) -> Result<()> {
+    db.execute(
+        "INSERT INTO app_settings (key, value_text, value_blob, updated_at)
+         VALUES (?, ?, NULL, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           value_text = excluded.value_text,
+           value_blob = NULL,
+           updated_at = excluded.updated_at",
+        &[
+            SqlValue::Text(key.into()),
+            SqlValue::Text(value.into()),
+            SqlValue::Text(timestamp()),
+        ],
+    )
+}
+
+fn read_setting_text_from_database(database: &Path, key: &str) -> Result<Option<String>> {
+    let db = Connection::open(database)?;
+    if !table_exists(&db, "app_settings")? {
+        return Ok(None);
+    }
+    get_setting_text(&db, key)
+}
+
+fn table_exists(db: &Connection, table: &str) -> Result<bool> {
+    Ok(!db
+        .query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            &[SqlValue::Text(table.into())],
+        )?
+        .is_empty())
+}
+
 fn get_setting_blob(db: &Connection, key: &str) -> Result<Option<Vec<u8>>> {
     Ok(db
         .query(
@@ -1602,10 +2184,10 @@ fn master_key_from_password(db: &Connection, password: &str) -> Result<[u8; 32]>
         (Some(salt), Some(check_nonce), Some(check_ciphertext)) => {
             crypto::unlock_master_password(password, &salt, &check_nonce, &check_ciphertext)
         }
-        (None, None, None) => Err(LocalOpenRouterError::Validation(
+        (None, None, None) => Err(LocalAIRouterError::Validation(
             "vault is not initialized".into(),
         )),
-        _ => Err(LocalOpenRouterError::Sqlite(
+        _ => Err(LocalAIRouterError::Sqlite(
             "vault metadata is incomplete; delete the database to recover".into(),
         )),
     }
@@ -1620,7 +2202,7 @@ fn decrypt_account_secret(db: &Connection, account_id: &str, key: &[u8; 32]) -> 
         .into_iter()
         .next()
         .ok_or_else(|| {
-            LocalOpenRouterError::NotFound(format!("secret missing for account `{account_id}`"))
+            LocalAIRouterError::NotFound(format!("secret missing for account `{account_id}`"))
         })?;
     crypto::decrypt_secret(
         key,
@@ -1638,7 +2220,7 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 fn normalize_non_empty(field: &str, value: &str) -> Result<String> {
     let normalized = value.trim();
     if normalized.is_empty() {
-        return Err(LocalOpenRouterError::Validation(format!(
+        return Err(LocalAIRouterError::Validation(format!(
             "{field} must not be empty"
         )));
     }
@@ -1648,12 +2230,12 @@ fn normalize_non_empty(field: &str, value: &str) -> Result<String> {
 fn normalize_slug(value: &str) -> Result<String> {
     let normalized = value.trim().to_ascii_lowercase();
     if normalized.is_empty() {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "provider slug must not be empty".into(),
         ));
     }
     if normalized.starts_with("admin") {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "provider slug must not start with `admin`".into(),
         ));
     }
@@ -1661,7 +2243,7 @@ fn normalize_slug(value: &str) -> Result<String> {
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
     {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "provider slug may only contain lowercase letters, digits, and dashes".into(),
         ));
     }
@@ -1671,12 +2253,12 @@ fn normalize_slug(value: &str) -> Result<String> {
 fn normalize_proxy_path(value: &str) -> Result<String> {
     let normalized = value.trim().trim_matches('/').to_ascii_lowercase();
     if normalized.is_empty() {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "proxy path must not be empty".into(),
         ));
     }
     if normalized.contains('/') {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "proxy path must be a single path segment".into(),
         ));
     }
@@ -1684,7 +2266,7 @@ fn normalize_proxy_path(value: &str) -> Result<String> {
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
     {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "proxy path may only contain lowercase letters, digits, and dashes".into(),
         ));
     }
@@ -1694,12 +2276,12 @@ fn normalize_proxy_path(value: &str) -> Result<String> {
 fn normalize_base_url(value: &str) -> Result<String> {
     let normalized = value.trim().trim_end_matches('/').to_owned();
     if normalized.is_empty() {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "base URL must not be empty".into(),
         ));
     }
     if !(normalized.starts_with("http://") || normalized.starts_with("https://")) {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "base URL must start with http:// or https://".into(),
         ));
     }
@@ -1716,12 +2298,12 @@ fn normalize_optional_base_url(value: Option<String>) -> Result<Option<String>> 
 fn normalize_header_name(value: &str) -> Result<String> {
     let normalized = value.trim();
     if normalized.is_empty() {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "auth header must not be empty".into(),
         ));
     }
     if normalized.contains(char::is_whitespace) {
-        return Err(LocalOpenRouterError::Validation(
+        return Err(LocalAIRouterError::Validation(
             "auth header must not contain whitespace".into(),
         ));
     }
@@ -1789,6 +2371,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
   status_code INTEGER,
   duration_ms INTEGER NOT NULL,
   error_text TEXT,
+  total_tokens INTEGER NOT NULL DEFAULT 0,
   request_headers TEXT NOT NULL,
   request_body TEXT NOT NULL,
   response_headers TEXT NOT NULL,
@@ -1819,18 +2402,21 @@ INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, CURRENT
 
 #[cfg(test)]
 mod tests {
-    use super::{AppPaths, Repository, daily_log_relative_path};
+    use super::{AppPaths, Repository, daily_log_relative_path, prune_expired_logs};
     use crate::models::{
-        AccountInput, ApiProtocol, ProviderInput, RequestLogInput, RouteBindingInput,
+        AccountInput, ApiProtocol, AppSettingsInput, DEFAULT_LOG_RETENTION_DAYS, DailyStatsQuery,
+        ProviderInput, RequestLogInput, RouteBindingInput,
     };
     use crate::sqlite::Connection;
+    use chrono::{TimeZone, Utc};
+    use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(1);
 
     fn unique_root() -> std::path::PathBuf {
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("localopenrouter-test-{id}"))
+        std::env::temp_dir().join(format!("localairouter-test-{id}"))
     }
 
     async fn repo() -> Repository {
@@ -2323,7 +2909,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 request_headers: r#"{"x-session-id":"sess_demo"}"#.into(),
                 request_body: r#"{"metadata":{"session_id":"sess_demo"}}"#.into(),
                 response_headers: "{}".into(),
-                response_body: r#"{"ok":true}"#.into(),
+                response_body: r#"{"ok":true,"usage":{"total_tokens":36}}"#.into(),
                 streamed: false,
             })
             .await
@@ -2331,9 +2917,20 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
 
         assert_eq!(stored.session_id.as_deref(), Some("sess_demo"));
         let expected_path = daily_log_relative_path(&stored.created_at);
-        assert_eq!(
-            stored.log_file_path.as_deref(),
-            Some(expected_path.as_str())
+        assert!(
+            stored
+                .log_file_path
+                .as_deref()
+                .map(|path| path.ends_with(expected_path.as_str()))
+                .unwrap_or(false)
+        );
+        assert!(
+            stored
+                .log_file_path
+                .as_deref()
+                .map(Path::new)
+                .map(Path::exists)
+                .unwrap_or(false)
         );
 
         let queried = repo
@@ -2346,14 +2943,19 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
         assert_eq!(queried.len(), 1);
         assert_eq!(queried[0].session_id.as_deref(), Some("sess_demo"));
         assert_eq!(queried[0].request_body, "");
+        assert_eq!(queried[0].total_tokens, 36);
 
         let detailed = repo.get_log(&stored.id).await.unwrap();
         assert_eq!(
             detailed.request_body,
             r#"{"metadata":{"session_id":"sess_demo"}}"#
         );
-        assert_eq!(detailed.response_body, r#"{"ok":true}"#);
+        assert_eq!(
+            detailed.response_body,
+            r#"{"ok":true,"usage":{"total_tokens":36}}"#
+        );
         assert_eq!(detailed.session_id.as_deref(), Some("sess_demo"));
+        assert_eq!(detailed.total_tokens, 36);
     }
 
     #[tokio::test]
@@ -2368,5 +2970,231 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             .unwrap();
         let health = repo.health().await.unwrap();
         assert!(health.db_path.ends_with(super::DATABASE_FILE_NAME));
+    }
+
+    #[test]
+    fn app_settings_can_override_logs_dir_and_port() {
+        let root = unique_root();
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = AppPaths::from_root(root.clone()).unwrap();
+        let custom_logs = root.join("external-logs");
+        let settings = super::save_app_settings(
+            &paths,
+            &AppSettingsInput {
+                daemon_port: 8412,
+                monitor_buffer_limit: 512,
+                log_retention_days: 45,
+                logs_dir: Some(custom_logs.to_string_lossy().into_owned()),
+            },
+        )
+        .unwrap();
+        assert_eq!(settings.daemon_port, 8412);
+        assert_eq!(settings.monitor_buffer_limit, 512);
+        assert_eq!(settings.log_retention_days, 45);
+        assert_eq!(settings.logs_dir, custom_logs.to_string_lossy());
+
+        let discovered = AppPaths::from_root(root).unwrap();
+        assert_eq!(discovered.logs, custom_logs);
+    }
+
+    #[test]
+    fn log_retention_defaults_to_thirty_days() {
+        let root = unique_root();
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = AppPaths::from_root(root).unwrap();
+        let settings = super::load_app_settings(&paths).unwrap();
+        assert_eq!(settings.log_retention_days, DEFAULT_LOG_RETENTION_DAYS);
+    }
+
+    #[test]
+    fn prune_expired_logs_removes_old_rows_and_daily_files() {
+        let root = unique_root();
+        let _ = std::fs::remove_dir_all(&root);
+        let paths = AppPaths::from_root(root).unwrap();
+        let db = super::open_settings_db(&paths.database).unwrap();
+        super::save_app_settings_with_db(
+            &db,
+            &paths,
+            &AppSettingsInput {
+                daemon_port: 7321,
+                monitor_buffer_limit: 200,
+                log_retention_days: 30,
+                logs_dir: None,
+            },
+        )
+        .unwrap();
+
+        let old_created_at = "2026-02-01T12:00:00+00:00";
+        let kept_created_at = "2026-03-20T12:00:00+00:00";
+        db.execute(
+            "INSERT INTO request_logs (
+               id, created_at, provider, session_id, model, account_id, method, path,
+               status_code, duration_ms, error_text, total_tokens, request_headers, request_body,
+               response_headers, response_body, request_headers_path, request_body_path,
+               response_headers_path, response_body_path, log_file_path, streamed
+             ) VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, 0, '', '', '', '', NULL, NULL, NULL, NULL, ?, ?)",
+            &[
+                crate::sqlite::SqlValue::Text("old-log".into()),
+                crate::sqlite::SqlValue::Text(old_created_at.into()),
+                crate::sqlite::SqlValue::Text("codex".into()),
+                crate::sqlite::SqlValue::Text("POST".into()),
+                crate::sqlite::SqlValue::Text("/codex/chat/completions".into()),
+                crate::sqlite::SqlValue::Integer(200),
+                crate::sqlite::SqlValue::Integer(120),
+                crate::sqlite::SqlValue::Text(
+                    paths
+                        .logs
+                        .join("2026-02-01.jsonl")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                crate::sqlite::SqlValue::Integer(0),
+            ],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO request_logs (
+               id, created_at, provider, session_id, model, account_id, method, path,
+               status_code, duration_ms, error_text, total_tokens, request_headers, request_body,
+               response_headers, response_body, request_headers_path, request_body_path,
+               response_headers_path, response_body_path, log_file_path, streamed
+             ) VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, 0, '', '', '', '', NULL, NULL, NULL, NULL, ?, ?)",
+            &[
+                crate::sqlite::SqlValue::Text("kept-log".into()),
+                crate::sqlite::SqlValue::Text(kept_created_at.into()),
+                crate::sqlite::SqlValue::Text("codex".into()),
+                crate::sqlite::SqlValue::Text("POST".into()),
+                crate::sqlite::SqlValue::Text("/codex/chat/completions".into()),
+                crate::sqlite::SqlValue::Integer(200),
+                crate::sqlite::SqlValue::Integer(80),
+                crate::sqlite::SqlValue::Text(
+                    paths
+                        .logs
+                        .join("2026-03-20.jsonl")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                crate::sqlite::SqlValue::Integer(0),
+            ],
+        )
+        .unwrap();
+        std::fs::write(
+            paths.logs.join("2026-02-01.jsonl"),
+            "{\"id\":\"old-log\"}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            paths.logs.join("2026-03-20.jsonl"),
+            "{\"id\":\"kept-log\"}\n",
+        )
+        .unwrap();
+
+        let now = Utc.with_ymd_and_hms(2026, 4, 8, 8, 0, 0).single().unwrap();
+        prune_expired_logs(&db, &paths, now).unwrap();
+
+        let rows = db
+            .query("SELECT id FROM request_logs ORDER BY id", &[])
+            .unwrap()
+            .into_iter()
+            .map(|row| row.get_text("id").unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(rows, vec!["kept-log"]);
+        assert!(!paths.logs.join("2026-02-01.jsonl").exists());
+        assert!(paths.logs.join("2026-03-20.jsonl").exists());
+    }
+
+    #[tokio::test]
+    async fn daily_stats_aggregate_requests_and_tokens() {
+        let repo = repo().await;
+        repo.insert_log(RequestLogInput {
+            provider: "codex".into(),
+            model: Some("gpt-5.4".into()),
+            account_id: Some("acct_primary".into()),
+            method: "POST".into(),
+            path: "/codex/responses".into(),
+            status_code: Some(200),
+            duration_ms: 25,
+            error_text: None,
+            request_headers: "{}".into(),
+            request_body: r#"{"model":"gpt-5.4"}"#.into(),
+            response_headers: "{}".into(),
+            response_body: r#"{"usage":{"total_tokens":120}}"#.into(),
+            streamed: false,
+        })
+        .await
+        .unwrap();
+        repo.insert_log(RequestLogInput {
+            provider: "codex".into(),
+            model: Some("gpt-5.4".into()),
+            account_id: Some("acct_primary".into()),
+            method: "POST".into(),
+            path: "/codex/responses".into(),
+            status_code: Some(502),
+            duration_ms: 40,
+            error_text: Some("bad gateway".into()),
+            request_headers: "{}".into(),
+            request_body: r#"{"model":"gpt-5.4"}"#.into(),
+            response_headers: "{}".into(),
+            response_body: r#"{"usage":{"total_tokens":80}}"#.into(),
+            streamed: false,
+        })
+        .await
+        .unwrap();
+
+        let stats = repo
+            .query_daily_stats(DailyStatsQuery {
+                days: Some(7),
+                utc_offset_minutes: Some(480),
+            })
+            .await
+            .unwrap();
+        let today = stats.last().unwrap();
+        assert_eq!(today.request_count, 2);
+        assert_eq!(today.success_count, 1);
+        assert_eq!(today.total_tokens, 200);
+    }
+
+    #[tokio::test]
+    async fn manual_token_rebuild_updates_historical_rows() {
+        let repo = repo().await;
+        let stored = repo
+            .insert_log(RequestLogInput {
+                provider: "codex".into(),
+                model: Some("gpt-5.4".into()),
+                account_id: Some("acct_primary".into()),
+                method: "POST".into(),
+                path: "/codex/responses".into(),
+                status_code: Some(200),
+                duration_ms: 25,
+                error_text: None,
+                request_headers: "{}".into(),
+                request_body: r#"{"model":"gpt-5.4"}"#.into(),
+                response_headers: "{}".into(),
+                response_body: r#"{"usage":{"input_tokens":192662,"input_tokens_details":{"cached_tokens":192512},"output_tokens":893,"total_tokens":193555}}"#.into(),
+                streamed: false,
+            })
+            .await
+            .unwrap();
+
+        {
+            let db = repo.db.lock().await;
+            db.execute(
+                "UPDATE request_logs SET total_tokens = ? WHERE id = ?",
+                &[
+                    crate::sqlite::SqlValue::Integer(193_555),
+                    crate::sqlite::SqlValue::Text(stored.id.clone()),
+                ],
+            )
+            .unwrap();
+        }
+
+        let report = repo.rebuild_total_tokens().await.unwrap();
+        assert_eq!(report.total_logs, 1);
+        assert_eq!(report.rebuilt_logs, 1);
+        assert_eq!(report.updated_logs, 1);
+        assert_eq!(report.skipped_logs, 0);
+
+        let rebuilt = repo.get_log(&stored.id).await.unwrap();
+        assert_eq!(rebuilt.total_tokens, 1_043);
     }
 }
