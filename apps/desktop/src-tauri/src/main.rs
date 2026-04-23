@@ -3,7 +3,7 @@
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream, UdpSocket};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Component;
@@ -32,10 +32,13 @@ const DAEMON_BINARY_NAME: &str = "localairouter-daemon";
 const DAEMON_PORT_ENV: &str = "LOCALAIROUTER_PORT";
 const LEGACY_DAEMON_PORT_ENV: &str = "LOCALOPENROUTER_PORT";
 const OLDER_DAEMON_PORT_ENV: &str = "LOCALROUTER_PORT";
+const DAEMON_ALLOW_LAN_ENV: &str = "LOCALAIROUTER_ALLOW_LAN";
+const LEGACY_DAEMON_ALLOW_LAN_ENV: &str = "LOCALOPENROUTER_ALLOW_LAN";
+const OLDER_DAEMON_ALLOW_LAN_ENV: &str = "LOCALROUTER_ALLOW_LAN";
 const DAEMON_PARENT_PID_ENV: &str = "LOCALAIROUTER_PARENT_PID";
 const LEGACY_DAEMON_PARENT_PID_ENV: &str = "LOCALOPENROUTER_PARENT_PID";
 const OLDER_DAEMON_PARENT_PID_ENV: &str = "LOCALROUTER_PARENT_PID";
-const DEFAULT_DAEMON_PORT: u16 = 7321;
+const DEFAULT_DAEMON_PORT: u16 = 16321;
 const UI_DEV_ENV: &str = "LOCALAIROUTER_UI_DEV";
 const LEGACY_UI_DEV_ENV: &str = "LOCALOPENROUTER_UI_DEV";
 const UI_DEV_PORT_ENV: &str = "LOCALAIROUTER_UI_DEV_PORT";
@@ -251,6 +254,8 @@ impl DaemonSupervisor {
 }
 
 fn main() {
+    ignore_terminal_hangup();
+
     tracing_subscriber::fmt()
         .with_env_filter("localairouter_desktop=info")
         .with_target(false)
@@ -296,6 +301,8 @@ fn main() {
             pick_logs_directory,
             get_app_settings,
             save_app_settings_command,
+            local_lan_ip,
+            write_clipboard_text,
             sync_codex_config,
             sync_claude_config,
             import_codex_account,
@@ -321,6 +328,16 @@ fn main() {
         .ok();
     shutdown_supervisor.shutdown();
 }
+
+#[cfg(unix)]
+fn ignore_terminal_hangup() {
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
+}
+
+#[cfg(not(unix))]
+fn ignore_terminal_hangup() {}
 
 #[tauri::command]
 fn daemon_status(
@@ -401,6 +418,16 @@ fn save_app_settings_command(input: AppSettingsInput) -> std::result::Result<App
 }
 
 #[tauri::command]
+fn local_lan_ip() -> Option<String> {
+    detect_primary_lan_ip().map(|ip| ip.to_string())
+}
+
+#[tauri::command]
+fn write_clipboard_text(text: String) -> std::result::Result<(), String> {
+    write_clipboard_text_native(&text).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn sync_codex_config(
     provider_slug: String,
     provider_name: String,
@@ -474,6 +501,11 @@ fn configure_child(command: &mut Command, log_file: &Path) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let port = configured_daemon_port().to_string();
+    let allow_lan = if configured_allow_lan_access() {
+        "1"
+    } else {
+        "0"
+    };
     let parent_pid = std::process::id().to_string();
     let stdout = OpenOptions::new()
         .create(true)
@@ -482,10 +514,13 @@ fn configure_child(command: &mut Command, log_file: &Path) -> Result<()> {
     let stderr = stdout.try_clone()?;
     command
         .env(DAEMON_PORT_ENV, &port)
+        .env(DAEMON_ALLOW_LAN_ENV, allow_lan)
         .env(DAEMON_PARENT_PID_ENV, &parent_pid)
         .env(LEGACY_DAEMON_PORT_ENV, &port)
+        .env(LEGACY_DAEMON_ALLOW_LAN_ENV, allow_lan)
         .env(LEGACY_DAEMON_PARENT_PID_ENV, &parent_pid)
         .env(OLDER_DAEMON_PORT_ENV, &port)
+        .env(OLDER_DAEMON_ALLOW_LAN_ENV, allow_lan)
         .env(OLDER_DAEMON_PARENT_PID_ENV, &parent_pid)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
@@ -518,6 +553,39 @@ fn configured_daemon_port() -> u16 {
         ],
         settings_port,
     )
+}
+
+fn configured_allow_lan_access() -> bool {
+    let settings_allow_lan = AppPaths::discover()
+        .ok()
+        .and_then(|paths| load_app_settings(&paths).ok())
+        .map(|settings| settings.allow_lan_access)
+        .unwrap_or(false);
+    parse_bool_env_list(&[
+        DAEMON_ALLOW_LAN_ENV,
+        LEGACY_DAEMON_ALLOW_LAN_ENV,
+        OLDER_DAEMON_ALLOW_LAN_ENV,
+    ])
+    .unwrap_or(settings_allow_lan)
+}
+
+fn detect_primary_lan_ip() -> Option<IpAddr> {
+    for target in ["8.8.8.8:80", "1.1.1.1:80"] {
+        let Ok(socket) = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) else {
+            continue;
+        };
+        if socket.connect(target).is_err() {
+            continue;
+        }
+        let Ok(addr) = socket.local_addr() else {
+            continue;
+        };
+        let ip = addr.ip();
+        if !ip.is_loopback() && !ip.is_unspecified() {
+            return Some(ip);
+        }
+    }
+    None
 }
 
 fn sync_codex_config_to_disk(
@@ -725,6 +793,7 @@ fn import_codex_account_contents(current: &str, auth_json: Option<&str>) -> Resu
         provider: "codex".into(),
         name,
         base_url,
+        default_model: None,
         api_key: Some(api_key),
         note: None,
         enabled: true,
@@ -738,7 +807,9 @@ fn import_claude_account_contents(current: &str) -> Result<AccountInput> {
         .as_object()
         .and_then(|object| object.get("env"))
         .and_then(JsonValue::as_object)
-        .ok_or_else(|| anyhow::anyhow!("expected `env` in ~/.claude/settings.json to be a JSON object"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("expected `env` in ~/.claude/settings.json to be a JSON object")
+        })?;
 
     let mut secret_candidates = Vec::new();
     if let Some(value) = json_string(env.get("ANTHROPIC_API_KEY")) {
@@ -749,8 +820,9 @@ fn import_claude_account_contents(current: &str) -> Result<AccountInput> {
     }
     secret_candidates.extend(json_backup_values(env, "ANTHROPIC_API_KEY"));
     secret_candidates.extend(json_backup_values(env, "ANTHROPIC_AUTH_TOKEN"));
-    let api_key = preferred_secret(secret_candidates)
-        .ok_or_else(|| anyhow::anyhow!("no usable Anthropic secret found in ~/.claude/settings.json"))?;
+    let api_key = preferred_secret(secret_candidates).ok_or_else(|| {
+        anyhow::anyhow!("no usable Anthropic secret found in ~/.claude/settings.json")
+    })?;
 
     let base_url = preferred_remote_url(claude_base_url_candidates(env))
         .filter(|value| value != "https://api.anthropic.com");
@@ -760,6 +832,7 @@ fn import_claude_account_contents(current: &str) -> Result<AccountInput> {
         provider: "claude-code".into(),
         name: "Claude Code".into(),
         base_url,
+        default_model: None,
         api_key: Some(api_key),
         note: None,
         enabled: true,
@@ -850,9 +923,8 @@ fn json_backup_values(env_object: &JsonMap<String, JsonValue>, key: &str) -> Vec
     let mut values = env_object
         .iter()
         .filter_map(|(entry_key, value)| {
-            parse_claude_env_backup_index(entry_key, key).and_then(|index| {
-                json_string(Some(value)).map(|text| (index, text))
-            })
+            parse_claude_env_backup_index(entry_key, key)
+                .and_then(|index| json_string(Some(value)).map(|text| (index, text)))
         })
         .collect::<Vec<_>>();
     values.sort_by_key(|(index, _)| *index);
@@ -988,8 +1060,11 @@ fn resolve_codex_api_key(provider: &Table, auth_json: Option<&str>) -> Result<St
         candidates.push(value);
     }
 
-    preferred_secret(candidates)
-        .ok_or_else(|| anyhow::anyhow!("no usable OpenAI secret found in ~/.codex/config.toml or ~/.codex/auth.json"))
+    preferred_secret(candidates).ok_or_else(|| {
+        anyhow::anyhow!(
+            "no usable OpenAI secret found in ~/.codex/config.toml or ~/.codex/auth.json"
+        )
+    })
 }
 
 fn codex_auth_json_candidates(current: &str) -> Result<Vec<String>> {
@@ -1159,6 +1234,71 @@ fn signal_process_group(pgid: i32, signal: i32) -> Result<()> {
         Ok(())
     } else {
         Err(error.into())
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn write_clipboard_text_native(text: &str) -> Result<()> {
+    write_to_clipboard_command("/usr/bin/pbcopy", &[], text)
+}
+
+#[cfg(target_os = "windows")]
+fn write_clipboard_text_native(text: &str) -> Result<()> {
+    write_to_clipboard_command("cmd", &["/C", "clip"], text)
+}
+
+#[cfg(target_os = "linux")]
+fn write_clipboard_text_native(text: &str) -> Result<()> {
+    let commands: &[(&str, &[&str])] = &[
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+    ];
+    let mut errors = Vec::new();
+    for (program, args) in commands {
+        match write_to_clipboard_command(program, args, text) {
+            Ok(()) => return Ok(()),
+            Err(error) => errors.push(format!("{program}: {error}")),
+        }
+    }
+    anyhow::bail!(
+        "no supported clipboard command succeeded: {}",
+        errors.join("; ")
+    )
+}
+
+#[cfg(all(unix, not(target_os = "macos"), not(target_os = "linux")))]
+fn write_clipboard_text_native(_text: &str) -> Result<()> {
+    anyhow::bail!("native clipboard is unsupported on this platform")
+}
+
+fn write_to_clipboard_command(program: &str, args: &[&str], text: &str) -> Result<()> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to start clipboard command `{program}`"))?;
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .context("failed to open clipboard command stdin")?;
+        stdin
+            .write_all(text.as_bytes())
+            .with_context(|| format!("failed to write to clipboard command `{program}`"))?;
+    }
+    let status = child
+        .wait()
+        .with_context(|| format!("failed to wait for clipboard command `{program}`"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "clipboard command `{program}` exited with {}",
+            exit_status_label(status)
+        )
     }
 }
 
@@ -1611,6 +1751,19 @@ fn parse_port_env(name: &str) -> Option<u16> {
 
 fn parse_port_env_list(names: &[&str]) -> Option<u16> {
     names.iter().find_map(|name| parse_port_env(name))
+}
+
+fn parse_bool_env(name: &str) -> Option<bool> {
+    env::var(name).ok().map(|value| {
+        matches!(
+            value.trim(),
+            "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+        )
+    })
+}
+
+fn parse_bool_env_list(names: &[&str]) -> Option<bool> {
+    names.iter().find_map(|name| parse_bool_env(name))
 }
 
 fn daemon_binary_is_fresh(binary: &Path) -> bool {
@@ -2107,7 +2260,7 @@ multi_agent = true
 "#;
 
         let (updated, profile_key, default_provider_updated, previous_model_provider) =
-            sync_codex_config_contents(input, "codex", "Codex", "http://127.0.0.1:7321/codex")
+            sync_codex_config_contents(input, "codex", "Codex", "http://127.0.0.1:16321/codex")
                 .expect("sync should succeed");
 
         assert_eq!(profile_key, "packycode");
@@ -2115,7 +2268,7 @@ multi_agent = true
         assert_eq!(previous_model_provider.as_deref(), Some("packycode"));
         assert!(updated.contains("model_provider = \"packycode\""));
         assert!(updated.contains("[model_providers.packycode]"));
-        assert!(updated.contains("base_url = \"http://127.0.0.1:7321/codex\""));
+        assert!(updated.contains("base_url = \"http://127.0.0.1:16321/codex\""));
         assert!(updated.contains("base_url1 = \"https://example.com/v1\""));
         assert!(updated.contains("extra_flag = true"));
         assert!(updated.contains("[features]"));
@@ -2134,13 +2287,13 @@ base_url1 = "https://example.com/v1"
 "#;
 
         let (updated, profile_key, default_provider_updated, previous_model_provider) =
-            sync_codex_config_contents(input, "codex", "Codex", "http://127.0.0.1:7321/codex")
+            sync_codex_config_contents(input, "codex", "Codex", "http://127.0.0.1:16321/codex")
                 .expect("sync should succeed");
 
         assert_eq!(profile_key, "packycode");
         assert!(!default_provider_updated);
         assert_eq!(previous_model_provider.as_deref(), Some("packycode"));
-        assert!(updated.contains("base_url = \"http://127.0.0.1:7321/codex\""));
+        assert!(updated.contains("base_url = \"http://127.0.0.1:16321/codex\""));
         assert!(updated.contains("base_url1 = \"https://example.com/v2\""));
         assert!(updated.contains("base_url2 = \"https://example.com/v1\""));
     }
@@ -2152,18 +2305,18 @@ model_provider = "packycode"
 
 [model_providers.packycode]
 base_url = "http://127.0.0.1:7322/codex"
-base_url1 = "http://127.0.0.1:7321/codex"
+base_url1 = "http://127.0.0.1:16321/codex"
 base_url2 = "http://127.0.0.1:7322/codex"
 "#;
 
         let (updated, profile_key, default_provider_updated, previous_model_provider) =
-            sync_codex_config_contents(input, "codex", "Codex", "http://127.0.0.1:7321/codex")
+            sync_codex_config_contents(input, "codex", "Codex", "http://127.0.0.1:16321/codex")
                 .expect("sync should succeed");
 
         assert_eq!(profile_key, "packycode");
         assert!(!default_provider_updated);
         assert_eq!(previous_model_provider.as_deref(), Some("packycode"));
-        assert!(updated.contains("base_url = \"http://127.0.0.1:7321/codex\""));
+        assert!(updated.contains("base_url = \"http://127.0.0.1:16321/codex\""));
         assert!(updated.contains("base_url1 = \"http://127.0.0.1:7322/codex\""));
         assert!(!updated.contains("base_url2 ="));
         assert!(!updated.contains("base_url3 ="));
@@ -2172,7 +2325,7 @@ base_url2 = "http://127.0.0.1:7322/codex"
     #[test]
     fn codex_sync_sets_default_provider_when_missing() {
         let (updated, profile_key, default_provider_updated, previous_model_provider) =
-            sync_codex_config_contents("", "codex", "Codex", "http://127.0.0.1:7321/codex")
+            sync_codex_config_contents("", "codex", "Codex", "http://127.0.0.1:16321/codex")
                 .expect("sync should succeed");
 
         assert_eq!(profile_key, "localairouter_codex");
@@ -2180,18 +2333,18 @@ base_url2 = "http://127.0.0.1:7322/codex"
         assert_eq!(previous_model_provider, None);
         assert!(updated.contains("model_provider = \"localairouter_codex\""));
         assert!(updated.contains("[model_providers.localairouter_codex]"));
-        assert!(updated.contains("base_url = \"http://127.0.0.1:7321/codex\""));
+        assert!(updated.contains("base_url = \"http://127.0.0.1:16321/codex\""));
         assert!(updated.contains("wire_api = \"responses\""));
         assert!(updated.contains("requires_openai_auth = true"));
     }
 
     #[test]
     fn claude_sync_initializes_settings_json_with_env() {
-        let updated = sync_claude_config_contents("", "http://127.0.0.1:7321/claude-code")
+        let updated = sync_claude_config_contents("", "http://127.0.0.1:16321/claude-code")
             .expect("sync should succeed");
 
         assert!(updated.contains("\"env\""));
-        assert!(updated.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:7321/claude-code\""));
+        assert!(updated.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:16321/claude-code\""));
         assert!(updated.contains("\"ANTHROPIC_API_KEY\": \"localairouter-managed\""));
     }
 
@@ -2208,12 +2361,12 @@ base_url2 = "http://127.0.0.1:7322/codex"
   }
 }"#;
 
-        let updated = sync_claude_config_contents(input, "http://127.0.0.1:7321/claude-code")
+        let updated = sync_claude_config_contents(input, "http://127.0.0.1:16321/claude-code")
             .expect("sync should succeed");
 
         assert!(updated.contains("\"permissions\""));
         assert!(updated.contains("\"CLAUDE_CODE_ENABLE_TELEMETRY\": \"1\""));
-        assert!(updated.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:7321/claude-code\""));
+        assert!(updated.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:16321/claude-code\""));
         assert!(updated.contains("\"ANTHROPIC_BASE_URL1\": \"https://api.anthropic.com\""));
         assert!(updated.contains("\"ANTHROPIC_API_KEY\": \"localairouter-managed\""));
         assert!(updated.contains("\"ANTHROPIC_API_KEY1\": \"sk-ant-old\""));
@@ -2224,15 +2377,15 @@ base_url2 = "http://127.0.0.1:7322/codex"
         let input = r#"{
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:7322/claude-code",
-    "ANTHROPIC_BASE_URL1": "http://127.0.0.1:7321/claude-code",
+    "ANTHROPIC_BASE_URL1": "http://127.0.0.1:16321/claude-code",
     "ANTHROPIC_BASE_URL2": "http://127.0.0.1:7322/claude-code"
   }
 }"#;
 
-        let updated = sync_claude_config_contents(input, "http://127.0.0.1:7321/claude-code")
+        let updated = sync_claude_config_contents(input, "http://127.0.0.1:16321/claude-code")
             .expect("sync should succeed");
 
-        assert!(updated.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:7321/claude-code\""));
+        assert!(updated.contains("\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:16321/claude-code\""));
         assert!(updated.contains("\"ANTHROPIC_BASE_URL1\": \"http://127.0.0.1:7322/claude-code\""));
         assert!(!updated.contains("\"ANTHROPIC_BASE_URL2\""));
     }
@@ -2243,7 +2396,7 @@ base_url2 = "http://127.0.0.1:7322/codex"
   "env": {
     "ANTHROPIC_API_KEY": "localairouter-managed",
     "ANTHROPIC_AUTH_TOKEN": "sk-ant-real",
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:7321/claude-code",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:16321/claude-code",
     "ANTHROPIC_BASE_URL1": "https://www.packyapi.com"
   }
 }"#;
@@ -2252,7 +2405,10 @@ base_url2 = "http://127.0.0.1:7322/codex"
 
         assert_eq!(account.provider, "claude-code");
         assert_eq!(account.name, "Claude Code");
-        assert_eq!(account.base_url.as_deref(), Some("https://www.packyapi.com"));
+        assert_eq!(
+            account.base_url.as_deref(),
+            Some("https://www.packyapi.com")
+        );
         assert_eq!(account.api_key.as_deref(), Some("sk-ant-real"));
     }
 
@@ -2263,7 +2419,7 @@ model_provider = "packycode"
 
 [model_providers.packycode]
 name = "packycode"
-base_url = "http://127.0.0.1:7321/codex"
+base_url = "http://127.0.0.1:16321/codex"
 base_url1 = "http://127.0.0.1:7332/codex"
 base_url2 = "https://codex-api.packycode.com/v1"
 wire_api = "responses"

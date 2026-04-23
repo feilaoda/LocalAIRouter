@@ -55,6 +55,7 @@ pub struct ProviderDefinition {
     pub display_name: String,
     pub protocol: ApiProtocol,
     pub base_url: String,
+    pub default_model: Option<String>,
     pub proxy_path: String,
     pub auth_header: String,
     pub auth_prefix: Option<String>,
@@ -71,6 +72,8 @@ pub struct ProviderInput {
     pub display_name: String,
     pub protocol: ApiProtocol,
     pub base_url: String,
+    #[serde(default)]
+    pub default_model: Option<String>,
     pub proxy_path: String,
     pub auth_header: String,
     pub auth_prefix: Option<String>,
@@ -93,6 +96,8 @@ pub struct HealthResponse {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub daemon_port: u16,
+    #[serde(default)]
+    pub allow_lan_access: bool,
     pub monitor_buffer_limit: u32,
     pub log_retention_days: u32,
     pub logs_dir: String,
@@ -105,6 +110,8 @@ pub struct AppSettings {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettingsInput {
     pub daemon_port: u16,
+    #[serde(default)]
+    pub allow_lan_access: bool,
     #[serde(default = "default_monitor_buffer_limit")]
     pub monitor_buffer_limit: u32,
     #[serde(default = "default_log_retention_days")]
@@ -161,6 +168,7 @@ pub struct Account {
     pub provider: String,
     pub name: String,
     pub base_url: Option<String>,
+    pub default_model: Option<String>,
     pub enabled: bool,
     pub note: Option<String>,
     pub has_secret: bool,
@@ -175,6 +183,8 @@ pub struct AccountInput {
     pub provider: String,
     pub name: String,
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub default_model: Option<String>,
     pub api_key: Option<String>,
     pub note: Option<String>,
     #[serde(default = "default_true")]
@@ -446,9 +456,7 @@ fn find_total_tokens(value: &serde_json::Value) -> Option<u64> {
     }
 }
 
-fn total_tokens_from_usage_object(
-    map: &serde_json::Map<String, serde_json::Value>,
-) -> Option<u64> {
+fn total_tokens_from_usage_object(map: &serde_json::Map<String, serde_json::Value>) -> Option<u64> {
     let prompt_tokens = token_value(map.get("prompt_tokens"));
     let input_tokens = token_value(map.get("input_tokens"));
     let cached_tokens = map
@@ -464,9 +472,9 @@ fn total_tokens_from_usage_object(
     let cache_discount = cached_tokens.unwrap_or(0) + cache_read_tokens.unwrap_or(0);
     let input_base = prompt_tokens.or(input_tokens);
     let input = match input_base {
-        Some(base) => Some(
-            base.saturating_sub(cache_discount) + cache_creation_tokens.unwrap_or(0),
-        ),
+        Some(base) => {
+            Some(base.saturating_sub(cache_discount) + cache_creation_tokens.unwrap_or(0))
+        }
         None => cache_creation_tokens,
     };
     let output = completion_tokens.or(output_tokens);
@@ -484,9 +492,12 @@ fn total_tokens_from_usage_object(
 
 fn token_value(value: Option<&serde_json::Value>) -> Option<u64> {
     value.and_then(|value| {
-        value
-            .as_u64()
-            .or_else(|| value.as_i64().filter(|number| *number >= 0).map(|number| number as u64))
+        value.as_u64().or_else(|| {
+            value
+                .as_i64()
+                .filter(|number| *number >= 0)
+                .map(|number| number as u64)
+        })
     })
 }
 

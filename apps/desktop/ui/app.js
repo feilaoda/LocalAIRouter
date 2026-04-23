@@ -1,4 +1,4 @@
-const DEFAULT_PORT = 7321;
+const DEFAULT_PORT = 16321;
 const DEFAULT_MONITOR_BUFFER_LIMIT = 200;
 const DEFAULT_LOG_RETENTION_DAYS = 30;
 const ONBOARDING_TARGETS = [
@@ -108,8 +108,14 @@ const ZH_MESSAGES = {
   "Update the local daemon listening port, live log buffer, and traffic log directory here. Saving settings restarts the daemon when it is running.":
     "在这里调整本地 Daemon 的监听端口、实时日志缓冲区、日志保留周期和流量日志目录。保存后如果 Daemon 正在运行，会自动重启。",
   "Update the local daemon listening port, live log buffer, log retention window, and traffic log directory here. Saving settings restarts the daemon when it is running.":
-    "在这里调整本地 Daemon 的监听端口、实时日志缓冲区、日志保留周期和流量日志目录。保存后如果 Daemon 正在运行，会自动重启。",
+    "在这里调整本地 Daemon 的监听端口、局域网访问、实时日志缓冲区、日志保留周期和流量日志目录。保存后如果 Daemon 正在运行，会自动重启。",
   "Listening Port": "监听端口",
+  "Allow LAN Access": "允许局域网访问",
+  "When enabled, the daemon binds to 0.0.0.0 so other devices can reach it through this machine's LAN IP.":
+    "启用后，Daemon 会绑定到 0.0.0.0，其他设备可通过本机局域网 IP 访问。",
+  "LAN access URL: {url}": "局域网访问地址：{url}",
+  "Unable to determine LAN IP. Check your network connection.":
+    "无法确定局域网 IP，请检查网络连接。",
   "Live Log Buffer": "实时日志缓冲",
   "Log Retention Days": "日志保留天数",
   "Traffic Logs Directory": "流量日志目录",
@@ -161,6 +167,12 @@ const ZH_MESSAGES = {
   "Base URL Override": "Base URL 覆盖",
   "Optional. Defaults to the provider base URL":
     "可选，默认使用 Provider 的 Base URL",
+  "Default Model": "默认模型",
+  "Optional. Overrides client request model for this account":
+    "可选。配置后此账号会覆盖客户端请求里的模型。",
+  "Optional. Overrides client request model for this provider":
+    "可选。配置后此 Provider 会覆盖客户端请求里的模型。",
+  "default model {model}": "默认模型 {model}",
   Note: "备注",
   "Optional note": "可选备注",
   "Account enabled": "启用账号",
@@ -238,6 +250,7 @@ const ZH_MESSAGES = {
   Delete: "删除",
   Disable: "禁用",
   Copy: "复制",
+  "Copy Full Log": "复制完整日志",
   "Copy URL": "复制 URL",
   "Copy Snippet": "复制片段",
   "Sync Config": "同步配置",
@@ -288,6 +301,9 @@ const ZH_MESSAGES = {
     "响应已完成，但没有可展示的预览内容。",
   "Copy failed. Clipboard access is unavailable.":
     "复制失败，当前环境无法访问剪贴板。",
+  "Full interaction log copied.": "完整交互日志已复制。",
+  "Full log is still being written. Try again after the request completes.":
+    "完整日志仍在写入，请在请求完成后重试。",
   "Desktop integration is unavailable in this context.":
     "当前上下文中无法使用桌面集成功能。",
   "Cannot reach the local daemon on {address}.":
@@ -458,6 +474,8 @@ const ZH_MESSAGES = {
     "Generic HTTP Provider 仍保持手动接入。请在这个命名空间后面追加上游特定的路径和负载。当前目标地址：{baseUrl}。",
   "Use this for smoke tests, quick probes, or custom scripts against the local provider namespace. Current target: {baseUrl}.":
     "将其用于冒烟测试、快速探测，或访问本地 Provider 命名空间的自定义脚本。当前目标地址：{baseUrl}。",
+  "LAN access is enabled. On other devices, replace 127.0.0.1 with this machine's LAN IP.":
+    "已启用局域网访问。在其他设备上，请把 127.0.0.1 替换成当前机器的局域网 IP。",
   "Generic HTTP providers do not have a Codex or Claude Code preset.":
     "Generic HTTP Provider 不提供 Codex 或 Claude Code 预设。",
   "Today's Requests": "今日请求数",
@@ -502,6 +520,7 @@ const state = {
   statsSelectedDay: null,
   onboarding: [],
   appSettings: null,
+  lanIp: "",
   locale: detectInitialLocale(),
   activeTab: "dashboard",
   accountProviderFilter: "",
@@ -560,12 +579,14 @@ const elements = {
   refreshOnboarding: document.querySelector("#refresh-onboarding"),
   settingsForm: document.querySelector("#settings-form"),
   settingsDaemonPort: document.querySelector("#settings-daemon-port"),
+  settingsAllowLan: document.querySelector("#settings-allow-lan"),
   settingsMonitorBuffer: document.querySelector("#settings-monitor-buffer"),
   settingsLogRetentionDays: document.querySelector(
     "#settings-log-retention-days",
   ),
   settingsLogsDir: document.querySelector("#settings-logs-dir"),
   settingsPickLogsDir: document.querySelector("#settings-pick-logs-dir"),
+  settingsLanAddress: document.querySelector("#settings-lan-address"),
   settingsDefaultLogsDir: document.querySelector("#settings-default-logs-dir"),
   settingsDataRoot: document.querySelector("#settings-data-root"),
   settingsDatabasePath: document.querySelector("#settings-database-path"),
@@ -586,6 +607,7 @@ const elements = {
   providerName: document.querySelector("#provider-name"),
   providerProtocol: document.querySelector("#provider-protocol"),
   providerBaseUrl: document.querySelector("#provider-base-url"),
+  providerDefaultModel: document.querySelector("#provider-default-model"),
   providerPath: document.querySelector("#provider-path"),
   providerPathDemo: document.querySelector("#provider-path-demo"),
   providerAuthHeader: document.querySelector("#provider-auth-header"),
@@ -615,6 +637,7 @@ const elements = {
     "#account-secret-copy-button",
   ),
   accountBaseUrl: document.querySelector("#account-base-url"),
+  accountDefaultModel: document.querySelector("#account-default-model"),
   accountNote: document.querySelector("#account-note"),
   accountEnabled: document.querySelector("#account-enabled"),
   accountsProviderTabs: document.querySelector("#accounts-provider-tabs"),
@@ -1144,6 +1167,14 @@ function bindEvents() {
   });
   elements.settingsDaemonPort.addEventListener("input", () => {
     state.settingsDirty = true;
+    renderSettings();
+  });
+  elements.settingsAllowLan.addEventListener("change", async () => {
+    state.settingsDirty = true;
+    if (elements.settingsAllowLan.checked && !state.lanIp) {
+      await refreshLanIp(false);
+    }
+    renderSettings();
   });
   elements.settingsMonitorBuffer.addEventListener("input", () => {
     state.settingsDirty = true;
@@ -1213,6 +1244,7 @@ function bindEvents() {
   elements.settingsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const daemonPort = Number(elements.settingsDaemonPort.value || DEFAULT_PORT);
+    const allowLanAccess = Boolean(elements.settingsAllowLan.checked);
     const monitorBufferLimit = Number(
       elements.settingsMonitorBuffer.value || DEFAULT_MONITOR_BUFFER_LIMIT,
     );
@@ -1223,7 +1255,13 @@ function bindEvents() {
     const saved = await performDesktop(
       () =>
         invokeDesktop("save_app_settings_command", {
-          input: { daemonPort, monitorBufferLimit, logRetentionDays, logsDir },
+          input: {
+            daemonPort,
+            allowLanAccess,
+            monitorBufferLimit,
+            logRetentionDays,
+            logsDir,
+          },
         }),
       null,
       t("Failed to save settings."),
@@ -1418,12 +1456,18 @@ async function refreshAll() {
 async function refreshAppSettings(silent = true) {
   if (!hasDesktopIntegration()) {
     state.appSettings = null;
+    state.lanIp = "";
     renderSettings();
     return;
   }
   try {
     state.appSettings = await invokeDesktop("get_app_settings");
     state.settingsDirty = false;
+    if (state.appSettings?.allowLanAccess) {
+      await refreshLanIp(true);
+    } else {
+      state.lanIp = "";
+    }
   } catch (error) {
     if (!silent) {
       notify(error?.message || t("Failed to save settings."), "error");
@@ -1431,6 +1475,26 @@ async function refreshAppSettings(silent = true) {
     console.error(error);
   }
   renderSettings();
+}
+
+async function refreshLanIp(silent = true) {
+  if (!hasDesktopIntegration()) {
+    state.lanIp = "";
+    return;
+  }
+  try {
+    state.lanIp = (await invokeDesktop("local_lan_ip")) || "";
+  } catch (error) {
+    state.lanIp = "";
+    if (!silent) {
+      notify(
+        error?.message ||
+          t("Unable to determine LAN IP. Check your network connection."),
+        "error",
+      );
+    }
+    console.error(error);
+  }
 }
 
 async function refreshDaemonStatus(silent = true) {
@@ -1631,6 +1695,10 @@ async function fetchLogs(filters, silent) {
     params.set("limit", String(filters.limit));
   }
   return api(`/admin/logs?${params.toString()}`, { silent });
+}
+
+async function fetchLog(logId, silent) {
+  return api(`/admin/logs/${encodeURIComponent(logId)}`, { silent });
 }
 
 async function fetchDailyStats(days, silent) {
@@ -1936,6 +2004,9 @@ function renderRouteSummary() {
         : t("Default missing"),
       t("{count} acct", { count: enabledAccounts.length }),
       t("{count} ovrd", { count: overrideCount }),
+      ...(provider.defaultModel
+        ? [t("default model {model}", { model: provider.defaultModel })]
+        : []),
       provider.isBuiltin ? t("built-in") : t("custom"),
       `/${provider.proxyPath}`,
     ].join(" · ");
@@ -2000,13 +2071,19 @@ function renderProviders() {
         : hasDesktopIntegration() && provider.protocol === "anthropic"
           ? t("Sync Claude")
           : null;
+    const providerDetails = [
+      provider.baseUrl,
+      ...(provider.defaultModel
+        ? [t("default model {model}", { model: provider.defaultModel })]
+        : []),
+    ].join(" · ");
     const item = document.createElement("article");
     item.className = "data-item";
     item.innerHTML = `
       <div class="item-title">
         <div class="item-copy">
           <h3>${escapeHtml(provider.displayName)}</h3>
-          <p class="muted item-detail clamp-2">${escapeHtml(provider.baseUrl)}</p>
+          <p class="muted item-detail clamp-2">${escapeHtml(providerDetails)}</p>
         </div>
         <span class="pill ${provider.enabled ? "ok" : "bad"}">${provider.enabled ? t("enabled") : t("disabled")}</span>
       </div>
@@ -2116,12 +2193,17 @@ function renderAccounts() {
     const provider = getProvider(account.provider);
     const defaultRoute = defaultRouteForProvider(account.provider);
     const isDefaultAccount = defaultRoute?.accountId === account.id;
-    const routeCount = countRoutesForAccount(account.id);
-    const upstreamSummary =
+  const routeCount = countRoutesForAccount(account.id);
+  const upstreamSummary =
       account.baseUrl || provider?.baseUrl || t("Uses provider base URL.");
-    const noteSummary = account.note
-      ? `${upstreamSummary} · ${account.note}`
-      : upstreamSummary;
+    const detailParts = [upstreamSummary];
+    if (account.defaultModel) {
+      detailParts.push(t("default model {model}", { model: account.defaultModel }));
+    }
+    if (account.note) {
+      detailParts.push(account.note);
+    }
+    const noteSummary = detailParts.join(" · ");
     const item = document.createElement("article");
     item.className = `data-item${isDefaultAccount ? " default-account-item" : ""}`;
     item.innerHTML = `
@@ -2410,6 +2492,10 @@ function renderMonitor() {
     const provider = getProvider(entry.provider);
     const providerName = provider ? provider.displayName : entry.provider;
     const accountName = account?.name || entry.accountId || t("routing");
+    const monitorCopyLabel = t("Copy Full Log");
+    const monitorCopyTitle = entry.logId
+      ? t("Copy Full Log")
+      : t("Full log is still being written. Try again after the request completes.");
     const item = document.createElement("article");
     item.className = "data-item monitor-item";
     item.innerHTML = `
@@ -2421,7 +2507,7 @@ function renderMonitor() {
         <div class="monitor-status">
           <span class="pill ${monitorPhaseTone(entry)}">${escapeHtml(monitorPhaseLabel(entry))}</span>
           <span class="pill ${monitorStatusTone(entry)}">${escapeHtml(monitorStatusLabel(entry))}</span>
-          <button type="button" class="ghost monitor-copy-button">${escapeHtml(t("Copy"))}</button>
+          <button type="button" class="ghost monitor-copy-button" title="${escapeHtml(monitorCopyTitle)}">${escapeHtml(monitorCopyLabel)}</button>
         </div>
       </div>
       <div class="data-meta">
@@ -2444,10 +2530,7 @@ function renderMonitor() {
     `;
     const copyButton = item.querySelector(".monitor-copy-button");
     copyButton.addEventListener("click", async () => {
-      await copyText(
-        buildMonitorClipboardText(entry, providerName, accountName),
-        t("Monitor item copied."),
-      );
+      await copyMonitorEntry(entry, providerName, accountName);
     });
     return item;
   });
@@ -2632,6 +2715,11 @@ function buildOnboardingGuide(targetId, provider) {
     "Current local daemon address: {daemonUrl}. This provider namespace resolves at {baseUrl}.",
     { daemonUrl, baseUrl },
   );
+  const lanNote = state.appSettings?.allowLanAccess
+    ? t(
+        "LAN access is enabled. On other devices, replace 127.0.0.1 with this machine's LAN IP.",
+      )
+    : null;
   const credentialNote = t(
     "Client credentials shown here are placeholders only. LocalAIRouter strips them and injects the real upstream secret from the selected account.",
   );
@@ -2667,6 +2755,7 @@ function buildOnboardingGuide(targetId, provider) {
         snippet: buildEnvSnippet(env),
         notes: [
           listenerNote,
+          ...(lanNote ? [lanNote] : []),
           providerStatusNote,
           routeStatusNote,
           credentialNote,
@@ -2691,6 +2780,7 @@ function buildOnboardingGuide(targetId, provider) {
         snippet: buildEnvSnippet(env),
         notes: [
           listenerNote,
+          ...(lanNote ? [lanNote] : []),
           providerStatusNote,
           routeStatusNote,
           credentialNote,
@@ -2721,6 +2811,7 @@ function buildOnboardingGuide(targetId, provider) {
         snippet: buildCurlSnippet(provider, baseUrl),
         notes: [
           listenerNote,
+          ...(lanNote ? [lanNote] : []),
           providerStatusNote,
           routeStatusNote,
           overrideNote,
@@ -2942,6 +3033,7 @@ function resetProviderForm() {
   elements.providerName.value = "";
   elements.providerProtocol.value = "openai";
   elements.providerBaseUrl.value = "";
+  elements.providerDefaultModel.value = "";
   elements.providerPath.value = "";
   elements.providerPath.dataset.autofill = "on";
   elements.providerAuthHeader.value = "";
@@ -2970,6 +3062,7 @@ function fillProviderForm(provider) {
   elements.providerName.value = provider.displayName;
   elements.providerProtocol.value = provider.protocol;
   elements.providerBaseUrl.value = provider.baseUrl;
+  elements.providerDefaultModel.value = provider.defaultModel || "";
   elements.providerPath.value = provider.proxyPath;
   elements.providerPath.dataset.autofill = "off";
   elements.providerAuthHeader.value = provider.authHeader;
@@ -2984,6 +3077,7 @@ function buildProviderPayload() {
   const slug = currentProviderSlug();
   const protocol = elements.providerProtocol.value;
   const baseUrl = elements.providerBaseUrl.value.trim();
+  const defaultModel = normalizeOptional(elements.providerDefaultModel.value);
   const proxyPath = normalizeSegment(elements.providerPath.value || slug);
   const authHeader = elements.providerAuthHeader.value.trim();
   const authPrefix = normalizeOptional(elements.providerAuthPrefix.value);
@@ -3043,6 +3137,7 @@ function buildProviderPayload() {
     displayName,
     protocol,
     baseUrl,
+    defaultModel,
     proxyPath,
     authHeader,
     authPrefix,
@@ -3120,6 +3215,7 @@ function resetAccountForm() {
   elements.accountName.value = "";
   elements.accountApiKey.value = "";
   elements.accountBaseUrl.value = "";
+  elements.accountDefaultModel.value = "";
   elements.accountNote.value = "";
   elements.accountEnabled.checked = true;
   const preferredProvider =
@@ -3189,6 +3285,7 @@ function fillAccountForm(account) {
   elements.accountName.value = account.name;
   elements.accountApiKey.value = "";
   elements.accountBaseUrl.value = account.baseUrl || "";
+  elements.accountDefaultModel.value = account.defaultModel || "";
   elements.accountNote.value = account.note || "";
   elements.accountEnabled.checked = account.enabled;
   renderAccountSecretControls();
@@ -3199,6 +3296,7 @@ function buildAccountPayload() {
   const name = elements.accountName.value.trim();
   const apiKey = normalizeOptional(elements.accountApiKey.value);
   const baseUrl = normalizeOptional(elements.accountBaseUrl.value);
+  const defaultModel = normalizeOptional(elements.accountDefaultModel.value);
   const note = normalizeOptional(elements.accountNote.value);
   const isEditing = Boolean(state.accountEditor);
 
@@ -3237,6 +3335,7 @@ function buildAccountPayload() {
     provider,
     name,
     baseUrl,
+    defaultModel,
     apiKey,
     note,
     enabled: elements.accountEnabled.checked,
@@ -3481,7 +3580,15 @@ function renderSettings() {
   const settings = state.appSettings;
   const enabled = hasDesktopIntegration();
   const daemonAvailable = Boolean(state.daemonStatus?.running);
-  const currentPort = settings?.daemonPort || DEFAULT_PORT;
+  const savedPort = settings?.daemonPort || DEFAULT_PORT;
+  const draftPort = Number(elements.settingsDaemonPort.value || savedPort);
+  const currentPort =
+    state.settingsDirty && Number.isFinite(draftPort) && draftPort > 0
+      ? draftPort
+      : savedPort;
+  const allowLanAccess = state.settingsDirty
+    ? Boolean(elements.settingsAllowLan.checked)
+    : Boolean(settings?.allowLanAccess);
   const currentMonitorBuffer =
     settings?.monitorBufferLimit || DEFAULT_MONITOR_BUFFER_LIMIT;
   const currentLogRetentionDays =
@@ -3491,6 +3598,7 @@ function renderSettings() {
 
   if (!state.settingsDirty) {
     elements.settingsDaemonPort.value = String(currentPort);
+    elements.settingsAllowLan.checked = allowLanAccess;
     elements.settingsMonitorBuffer.value = String(currentMonitorBuffer);
     elements.settingsLogRetentionDays.value = String(currentLogRetentionDays);
     elements.settingsLogsDir.value = currentLogsDir;
@@ -3498,9 +3606,22 @@ function renderSettings() {
   elements.settingsDefaultLogsDir.textContent = defaultLogsDir
     ? t("Default logs directory: {path}", { path: defaultLogsDir })
     : t("Default logs directory will appear here.");
+  if (elements.settingsLanAddress) {
+    if (allowLanAccess) {
+      const lanUrl = state.lanIp ? `http://${state.lanIp}:${currentPort}/` : "";
+      elements.settingsLanAddress.textContent = lanUrl
+        ? t("LAN access URL: {url}", { url: lanUrl })
+        : t("Unable to determine LAN IP. Check your network connection.");
+      elements.settingsLanAddress.hidden = false;
+    } else {
+      elements.settingsLanAddress.textContent = "";
+      elements.settingsLanAddress.hidden = true;
+    }
+  }
   elements.settingsDataRoot.value = settings?.dataRoot || "";
   elements.settingsDatabasePath.value = settings?.databasePath || "";
   elements.settingsDaemonPort.disabled = !enabled;
+  elements.settingsAllowLan.disabled = !enabled;
   elements.settingsMonitorBuffer.disabled = !enabled;
   elements.settingsLogRetentionDays.disabled = !enabled;
   elements.settingsLogsDir.disabled = !enabled;
@@ -3773,20 +3894,66 @@ function monitorDurationLabel(entry) {
     : t("live");
 }
 
-function buildMonitorClipboardText(entry, providerName, accountName) {
+function buildFullLogClipboardText(log, fallbackProviderName, fallbackAccountName) {
+  const provider = getProvider(log.provider);
+  const account = state.accounts.find(
+    (candidate) => candidate.id === log.accountId,
+  );
+  const providerName = provider?.displayName || fallbackProviderName || log.provider;
+  const accountName =
+    account?.name || log.accountId || fallbackAccountName || t("No account");
+  const metadata = [
+    ["id", log.id],
+    ["createdAt", formatDateTime(log.createdAt)],
+    ["provider", providerName],
+    ["providerSlug", log.provider],
+    ["account", accountName],
+    ["accountId", log.accountId],
+    ["model", log.model || t("model unavailable")],
+    ["method", log.method],
+    ["path", log.path],
+    ["status", log.statusCode ?? "error"],
+    ["duration", formatLatency(log.durationMs)],
+    ["streamed", log.streamed ? "true" : "false"],
+    ["totalTokens", formatTokenCount(log.totalTokens)],
+    ["sessionId", log.sessionId],
+    ["logFilePath", log.logFilePath],
+  ];
+  if (log.errorText) {
+    metadata.push(["error", log.errorText]);
+  }
+
   return [
-    `${entry.method} ${entry.path}`,
-    `${t("provider")}: ${providerName}`,
-    `${t("account")}: ${accountName}`,
-    `${t("model")}: ${entry.model || t("model unavailable")}`,
-    `${t("phase")}: ${monitorPhaseLabel(entry)}`,
-    `${t("status")}: ${monitorStatusLabel(entry)}`,
-    `${t("duration")}: ${monitorDurationLabel(entry)}`,
-    `${t("mode")}: ${entry.streamed ? t("streamed") : t("sync")}`,
-    `${t("updated")}: ${formatDateTime(entry.updatedAt || entry.startedAt)}`,
-    `${t("request")}: ${monitorRequestSummary(entry)}`,
-    `${t("response")}: ${monitorResponseSummary(entry)}`,
+    "LocalAIRouter Interaction Log",
+    "",
+    "Metadata",
+    ...metadata.map(([key, value]) => `${key}: ${formatMetadataValue(value)}`),
+    "",
+    "Request Headers",
+    formatLogPayload(log.requestHeaders),
+    "",
+    "Request Body",
+    formatLogPayload(log.requestBody),
+    "",
+    "Response Headers",
+    formatLogPayload(log.responseHeaders),
+    "",
+    "Response Body",
+    formatLogPayload(log.responseBody),
   ].join("\n");
+}
+
+function formatMetadataValue(value) {
+  return value === null || value === undefined || value === "" ? "--" : value;
+}
+
+function formatLogPayload(value) {
+  const text = typeof value === "string" ? value : "";
+  if (!text) {
+    return "(empty)";
+  }
+  const parsed = safeJsonParse(text);
+  return parsed ? JSON.stringify(parsed, null, 2) : text;
 }
 
 function countRoutesForAccount(accountId) {
@@ -3869,24 +4036,84 @@ function buildCurlSnippet(provider, baseUrl) {
 
 async function copyText(text, successMessage) {
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-    } else {
-      const buffer = document.createElement("textarea");
-      buffer.value = text;
-      buffer.setAttribute("readonly", "");
-      buffer.style.position = "absolute";
-      buffer.style.left = "-9999px";
-      document.body.appendChild(buffer);
-      buffer.select();
-      document.execCommand("copy");
-      buffer.remove();
-    }
+    await writeClipboardText(String(text ?? ""));
     notify(successMessage, "success");
   } catch (error) {
     console.error(error);
     notify(t("Copy failed. Clipboard access is unavailable."), "error");
   }
+}
+
+async function writeClipboardText(text) {
+  if (hasDesktopIntegration()) {
+    try {
+      await invokeDesktop("write_clipboard_text", { text });
+      return;
+    } catch (error) {
+      console.warn("Native clipboard copy failed; trying web clipboard.", error);
+    }
+  }
+
+  let clipboardError = null;
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (error) {
+      clipboardError = error;
+      console.warn("Web clipboard copy failed; trying textarea fallback.", error);
+    }
+  }
+
+  if (copyTextWithTextarea(text)) {
+    return;
+  }
+
+  throw clipboardError || new Error("clipboard access is unavailable");
+}
+
+function copyTextWithTextarea(text) {
+  const buffer = document.createElement("textarea");
+  buffer.value = text;
+  buffer.setAttribute("readonly", "");
+  buffer.style.position = "fixed";
+  buffer.style.left = "-9999px";
+  buffer.style.top = "0";
+  document.body.appendChild(buffer);
+  buffer.focus();
+  buffer.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (error) {
+    console.warn("Textarea clipboard fallback failed.", error);
+  } finally {
+    buffer.remove();
+  }
+  return copied;
+}
+
+async function copyMonitorEntry(entry, providerName, accountName) {
+  let logId = entry.logId;
+  if (!logId && ["completed", "failed"].includes(entry.phase)) {
+    await refreshMonitor(true);
+    logId = state.monitor.find((candidate) => candidate.id === entry.id)?.logId;
+  }
+  if (!logId) {
+    notify(
+      t("Full log is still being written. Try again after the request completes."),
+      "info",
+    );
+    return;
+  }
+  const log = await perform(() => fetchLog(logId, false));
+  if (!log) {
+    return;
+  }
+  await copyText(
+    buildFullLogClipboardText(log, providerName, accountName),
+    t("Full interaction log copied."),
+  );
 }
 
 async function syncProviderConfig(provider) {

@@ -514,6 +514,25 @@
               </label>
             </div>
 
+            <label class="toggle">
+              <input id="settings-allow-lan" type="checkbox" />
+              <span data-i18n="Allow LAN Access">Allow LAN Access</span>
+            </label>
+
+            <p
+              class="compact-note"
+              data-i18n="When enabled, the daemon binds to 0.0.0.0 so other devices can reach it through this machine's LAN IP."
+            >
+              When enabled, the daemon binds to 0.0.0.0 so other devices can
+              reach it through this machine's LAN IP.
+            </p>
+
+            <p
+              class="compact-note"
+              id="settings-lan-address"
+              hidden
+            ></p>
+
             <label class="field">
               <span data-i18n="Traffic Logs Directory"
                 >Traffic Logs Directory</span
@@ -750,6 +769,19 @@
             />
           </label>
 
+          <label class="field">
+            <span data-i18n="Default Model">Default Model</span>
+            <input
+              id="provider-default-model"
+              type="text"
+              placeholder="Optional. Overrides client request model for this provider"
+              data-i18n-placeholder="Optional. Overrides client request model for this provider"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </label>
+
           <div class="split-fields">
             <label class="field">
               <span data-i18n="Auth Header">Auth Header</span>
@@ -920,6 +952,19 @@
               placeholder="Optional. Defaults to the provider base URL"
               data-i18n-placeholder="Optional. Defaults to the provider base URL"
               inputmode="url"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </label>
+
+          <label class="field">
+            <span data-i18n="Default Model">Default Model</span>
+            <input
+              id="account-default-model"
+              type="text"
+              placeholder="Optional. Overrides client request model for this account"
+              data-i18n-placeholder="Optional. Overrides client request model for this account"
               autocapitalize="off"
               autocorrect="off"
               spellcheck="false"

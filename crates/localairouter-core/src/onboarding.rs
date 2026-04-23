@@ -1,7 +1,7 @@
 use crate::error::{LocalAIRouterError, Result};
 use crate::models::{EnvVarExample, OnboardingGuide, ProviderDefinition};
 
-pub const DEFAULT_PORT: u16 = 7321;
+pub const DEFAULT_PORT: u16 = 16321;
 
 pub fn guide_for_target(
     target: &str,

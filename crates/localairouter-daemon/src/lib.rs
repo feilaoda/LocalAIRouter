@@ -24,6 +24,7 @@ use localairouter_core::models::{
 use localairouter_core::{LocalAIRouterError, Repository, Result, extract_model};
 use reqwest::Client;
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 use tokio::net::TcpListener;
 use tokio::time::{Duration, sleep};
 use tracing::{info, warn};
@@ -33,8 +34,9 @@ use uuid::Uuid;
 mod config;
 
 pub use config::{
-    DAEMON_BINARY_NAME, DAEMON_PARENT_PID_ENV, DAEMON_PORT_ENV, DEFAULT_TRACING_FILTER,
-    DaemonConfig, LEGACY_DAEMON_PARENT_PID_ENV, LEGACY_DAEMON_PORT_ENV,
+    DAEMON_ALLOW_LAN_ENV, DAEMON_BINARY_NAME, DAEMON_PARENT_PID_ENV, DAEMON_PORT_ENV,
+    DEFAULT_TRACING_FILTER, DaemonConfig, LEGACY_DAEMON_ALLOW_LAN_ENV,
+    LEGACY_DAEMON_PARENT_PID_ENV, LEGACY_DAEMON_PORT_ENV,
 };
 
 type BoxError = Box<dyn Error + Send + Sync>;
@@ -52,6 +54,7 @@ struct AppState {
 #[serde(rename_all = "camelCase")]
 struct MonitorEntry {
     id: String,
+    log_id: Option<String>,
     started_at: String,
     updated_at: String,
     provider: String,
@@ -94,6 +97,7 @@ impl MonitorFeed {
         let now = timestamp();
         let entry = MonitorEntry {
             id: id.clone(),
+            log_id: None,
             started_at: now.clone(),
             updated_at: now,
             provider: provider.to_owned(),
@@ -115,9 +119,11 @@ impl MonitorFeed {
         id
     }
 
-    fn mark_routed(&self, id: &str, account_id: &str) {
+    fn mark_routed(&self, id: &str, account_id: &str, model: Option<String>, request_body: &str) {
         self.update_entry(id, |entry| {
             entry.account_id = Some(account_id.into());
+            entry.model = model;
+            entry.request_preview = preview_text(request_body);
             entry.phase = "upstream".into();
         });
     }
@@ -167,6 +173,12 @@ impl MonitorFeed {
             } else {
                 "completed".into()
             };
+        });
+    }
+
+    fn attach_log(&self, id: &str, log_id: String) {
+        self.update_entry(id, |entry| {
+            entry.log_id = Some(log_id);
         });
     }
 
@@ -228,22 +240,32 @@ impl MonitorFeed {
 }
 
 pub async fn run() -> Result<()> {
+    ignore_terminal_hangup();
     run_with_config(DaemonConfig::from_env()).await
 }
+
+#[cfg(unix)]
+fn ignore_terminal_hangup() {
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
+}
+
+#[cfg(not(unix))]
+fn ignore_terminal_hangup() {}
 
 pub async fn run_with_config(config: DaemonConfig) -> Result<()> {
     init_tracing(&config.tracing_filter);
     let port = config.port;
+    let bind_addr = SocketAddr::from((config.bind_ip(), port));
     info!(
-        "localairouter daemon booting on requested port {port} with monitor buffer {}",
-        config.monitor_buffer_limit
+        "localairouter daemon booting on requested address {bind_addr} with monitor buffer {}",
+        config.monitor_buffer_limit,
     );
     spawn_parent_watchdog(config.parent_pid);
-    let listener = TcpListener::bind(("127.0.0.1", port))
+    let listener = TcpListener::bind(bind_addr)
         .await
-        .map_err(|error| {
-            LocalAIRouterError::Io(format!("failed to bind 127.0.0.1:{port}: {error}"))
-        })?;
+        .map_err(|error| LocalAIRouterError::Io(format!("failed to bind {bind_addr}: {error}")))?;
     let repository = Arc::new(Repository::new(port).await.map_err(|error| {
         LocalAIRouterError::Message(format!("failed to initialize repository: {error}"))
     })?);
@@ -453,25 +475,28 @@ async fn proxy_request(
         .await
         .map_err(map_http)?
         .to_bytes();
-    let request_body_text = String::from_utf8_lossy(&request_body).into_owned();
-    let model = extract_model(&request_body);
+    let client_model = extract_model(&request_body);
+    let initial_request_body_text = String::from_utf8_lossy(&request_body).into_owned();
     let start = Instant::now();
     let monitor_id = state.monitor.start(
         &provider.slug,
-        model.clone(),
+        client_model.clone(),
         &method,
         &request_path,
-        &request_body_text,
+        &initial_request_body_text,
     );
+    let routing_model = provider
+        .default_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .or(client_model.as_deref());
     let resolved = match state
         .repository
-        .resolve_account(&provider.slug, model.as_deref())
+        .resolve_account(&provider.slug, routing_model)
         .await
     {
-        Ok(resolved) => {
-            state.monitor.mark_routed(&monitor_id, &resolved.account.id);
-            resolved
-        }
+        Ok(resolved) => resolved,
         Err(error) => {
             state.monitor.complete(
                 &monitor_id,
@@ -484,6 +509,19 @@ async fn proxy_request(
             return Err(error);
         }
     };
+    let default_model = resolved
+        .account
+        .default_model
+        .as_deref()
+        .or(resolved.provider.default_model.as_deref());
+    let (request_body, request_body_text, model) =
+        apply_account_default_model(request_body, default_model);
+    state.monitor.mark_routed(
+        &monitor_id,
+        &resolved.account.id,
+        model.clone(),
+        &request_body_text,
+    );
     let upstream_url = format!(
         "{}{}{}",
         resolved.upstream_base_url.trim_end_matches('/'),
@@ -529,7 +567,7 @@ async fn proxy_request(
                 None,
                 false,
             );
-            let _ = state
+            let inserted_log = state
                 .repository
                 .insert_log(RequestLogInput {
                     provider: resolved.provider.slug.clone(),
@@ -547,6 +585,9 @@ async fn proxy_request(
                     streamed: false,
                 })
                 .await;
+            if let Ok(log) = inserted_log {
+                state.monitor.attach_log(&monitor_id, log.id);
+            }
             return Err(LocalAIRouterError::Http(error.to_string()));
         }
     };
@@ -611,7 +652,7 @@ async fn proxy_request(
             Some(response_body.clone()),
             false,
         );
-        let _ = state
+        let inserted_log = state
             .repository
             .insert_log(RequestLogInput {
                 provider: resolved.provider.slug,
@@ -629,6 +670,9 @@ async fn proxy_request(
                 streamed: false,
             })
             .await;
+        if let Ok(log) = inserted_log {
+            state.monitor.attach_log(&monitor_id, log.id);
+        }
 
         let mut response = Response::builder()
             .status(status)
@@ -714,7 +758,7 @@ async fn stream_response(
             Some(response_body.clone()),
             true,
         );
-        let _ = repository
+        let inserted_log = repository
             .insert_log(RequestLogInput {
                 provider: provider_slug,
                 model,
@@ -731,6 +775,9 @@ async fn stream_response(
                 streamed: true,
             })
             .await;
+        if let Ok(log) = inserted_log {
+            monitor.attach_log(&monitor_id, log.id);
+        }
     });
 
     let body = BodyExt::boxed(StreamBody::new(receiver));
@@ -890,6 +937,49 @@ fn sanitize_reqwest_headers(headers: &reqwest::header::HeaderMap) -> String {
     serde_json::to_string_pretty(&sanitized).unwrap_or_else(|_| "{}".into())
 }
 
+fn apply_account_default_model(
+    request_body: Bytes,
+    default_model: Option<&str>,
+) -> (Bytes, String, Option<String>) {
+    let Some(default_model) = default_model
+        .map(str::trim)
+        .filter(|default_model| !default_model.is_empty())
+    else {
+        let model = extract_model(&request_body);
+        let request_body_text = String::from_utf8_lossy(&request_body).into_owned();
+        return (request_body, request_body_text, model);
+    };
+
+    let Ok(mut json) = serde_json::from_slice::<JsonValue>(&request_body) else {
+        let model = extract_model(&request_body);
+        let request_body_text = String::from_utf8_lossy(&request_body).into_owned();
+        return (request_body, request_body_text, model);
+    };
+    let Some(object) = json.as_object_mut() else {
+        let model = extract_model(&request_body);
+        let request_body_text = String::from_utf8_lossy(&request_body).into_owned();
+        return (request_body, request_body_text, model);
+    };
+
+    object.insert("model".into(), JsonValue::String(default_model.to_owned()));
+    match serde_json::to_vec(&json) {
+        Ok(body) => {
+            let request_body = Bytes::from(body);
+            let request_body_text = String::from_utf8_lossy(&request_body).into_owned();
+            (
+                request_body,
+                request_body_text,
+                Some(default_model.to_owned()),
+            )
+        }
+        Err(_) => {
+            let model = extract_model(&request_body);
+            let request_body_text = String::from_utf8_lossy(&request_body).into_owned();
+            (request_body, request_body_text, model)
+        }
+    }
+}
+
 fn request_headers_for_upstream(
     original: &HeaderMap<HeaderValue>,
 ) -> Vec<(HeaderName, HeaderValue)> {
@@ -1000,4 +1090,43 @@ fn parent_process_alive(parent_pid: u32) -> bool {
 #[cfg(not(unix))]
 fn parent_process_alive(_parent_pid: u32) -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_account_default_model;
+    use bytes::Bytes;
+
+    #[test]
+    fn account_default_model_overrides_existing_request_model() {
+        let (body, text, model) = apply_account_default_model(
+            Bytes::from_static(br#"{"model":"gpt-4.1","messages":[]}"#),
+            Some("gpt-5.4"),
+        );
+        assert_eq!(model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["model"].as_str(),
+            Some("gpt-5.4")
+        );
+        assert!(text.contains("\"model\":\"gpt-5.4\""));
+    }
+
+    #[test]
+    fn account_default_model_is_inserted_when_missing() {
+        let (body, _, model) =
+            apply_account_default_model(Bytes::from_static(br#"{"messages":[]}"#), Some("sonnet"));
+        assert_eq!(model.as_deref(), Some("sonnet"));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["model"].as_str(),
+            Some("sonnet")
+        );
+    }
+
+    #[test]
+    fn request_body_stays_unchanged_without_account_default_model() {
+        let original = Bytes::from_static(br#"{"model":"gpt-4.1","messages":[]}"#);
+        let (body, _, model) = apply_account_default_model(original.clone(), None);
+        assert_eq!(model.as_deref(), Some("gpt-4.1"));
+        assert_eq!(body, original);
+    }
 }

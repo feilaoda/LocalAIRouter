@@ -25,6 +25,7 @@ const VAULT_SALT_KEY: &str = "vault_salt";
 const VAULT_CHECK_NONCE_KEY: &str = "vault_check_nonce";
 const VAULT_CHECK_CIPHERTEXT_KEY: &str = "vault_check_ciphertext";
 const APP_SETTING_DAEMON_PORT_KEY: &str = "daemon_port";
+const APP_SETTING_ALLOW_LAN_ACCESS_KEY: &str = "allow_lan_access";
 const APP_SETTING_MONITOR_BUFFER_LIMIT_KEY: &str = "monitor_buffer_limit";
 const APP_SETTING_LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 const APP_SETTING_LOGS_DIR_KEY: &str = "logs_dir";
@@ -311,7 +312,7 @@ impl Repository {
     pub async fn list_providers(&self) -> Result<Vec<ProviderDefinition>> {
         let db = self.db.lock().await;
         let rows = db.query(
-            "SELECT slug, display_name, protocol, base_url, proxy_path, auth_header,
+            "SELECT slug, display_name, protocol, base_url, default_model, proxy_path, auth_header,
              auth_prefix, enabled, is_builtin, created_at, updated_at
              FROM providers ORDER BY is_builtin DESC, display_name, slug",
             &[],
@@ -337,6 +338,7 @@ impl Repository {
         let normalized_slug = normalize_slug(&input.slug)?;
         let display_name = normalize_non_empty("display name", &input.display_name)?;
         let base_url = normalize_base_url(&input.base_url)?;
+        let default_model = normalize_optional(input.default_model);
         let proxy_path = normalize_proxy_path(&input.proxy_path)?;
         let auth_header = normalize_header_name(&input.auth_header)?;
         let auth_prefix = normalize_optional(input.auth_prefix);
@@ -368,13 +370,14 @@ impl Repository {
 
         db.execute(
             "INSERT INTO providers (
-               slug, display_name, protocol, base_url, proxy_path, auth_header, auth_prefix,
+               slug, display_name, protocol, base_url, default_model, proxy_path, auth_header, auth_prefix,
                enabled, is_builtin, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(slug) DO UPDATE SET
                display_name = excluded.display_name,
                protocol = excluded.protocol,
                base_url = excluded.base_url,
+               default_model = excluded.default_model,
                proxy_path = excluded.proxy_path,
                auth_header = excluded.auth_header,
                auth_prefix = excluded.auth_prefix,
@@ -385,6 +388,10 @@ impl Repository {
                 SqlValue::Text(display_name),
                 SqlValue::Text(protocol.as_str().into()),
                 SqlValue::Text(base_url),
+                default_model
+                    .clone()
+                    .map(SqlValue::Text)
+                    .unwrap_or(SqlValue::Null),
                 SqlValue::Text(proxy_path),
                 SqlValue::Text(auth_header),
                 auth_prefix
@@ -452,7 +459,7 @@ impl Repository {
     pub async fn list_accounts(&self) -> Result<Vec<Account>> {
         let db = self.db.lock().await;
         let rows = db.query(
-            "SELECT a.id, a.provider, a.name, a.base_url, a.enabled, a.note,
+            "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.enabled, a.note,
              EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
              a.created_at, a.updated_at
              FROM accounts a ORDER BY a.provider, a.name",
@@ -468,6 +475,7 @@ impl Repository {
         let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let now = timestamp();
         let base_url = normalize_optional_base_url(input.base_url)?;
+        let default_model = normalize_optional(input.default_model);
         let note = normalize_optional(input.note);
 
         let db = self.db.lock().await;
@@ -490,12 +498,13 @@ impl Repository {
             .unwrap_or_else(|| now.clone());
 
         db.execute(
-            "INSERT INTO accounts (id, provider, name, base_url, enabled, note, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO accounts (id, provider, name, base_url, default_model, enabled, note, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                provider = excluded.provider,
                name = excluded.name,
                base_url = excluded.base_url,
+               default_model = excluded.default_model,
                enabled = excluded.enabled,
                note = excluded.note,
                updated_at = excluded.updated_at",
@@ -504,6 +513,10 @@ impl Repository {
                 SqlValue::Text(provider_slug.clone()),
                 SqlValue::Text(input.name.trim().into()),
                 base_url.clone().map(SqlValue::Text).unwrap_or(SqlValue::Null),
+                default_model
+                    .clone()
+                    .map(SqlValue::Text)
+                    .unwrap_or(SqlValue::Null),
                 SqlValue::Integer(i64::from(input.enabled)),
                 note.clone().map(SqlValue::Text).unwrap_or(SqlValue::Null),
                 SqlValue::Text(created_at),
@@ -581,7 +594,7 @@ impl Repository {
         let db = self.db.lock().await;
         let row = db
             .query(
-                "SELECT a.id, a.provider, a.name, a.base_url, a.enabled, a.note,
+                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.enabled, a.note,
                  EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
@@ -780,7 +793,10 @@ impl Repository {
                 log_file_path: row.get_optional_text("log_file_path")?,
             };
             if let Some(log_file_path) = candidate.log_file_path.clone() {
-                file_groups.entry(log_file_path).or_default().push(candidate);
+                file_groups
+                    .entry(log_file_path)
+                    .or_default()
+                    .push(candidate);
             } else {
                 inline_rows.push(candidate);
             }
@@ -806,7 +822,8 @@ impl Repository {
                 candidate.response_body_path.clone(),
                 candidate.response_body.clone(),
             )?;
-            let total_tokens = extract_total_tokens(&response_body).unwrap_or(candidate.current_total);
+            let total_tokens =
+                extract_total_tokens(&response_body).unwrap_or(candidate.current_total);
             computed.push((candidate.id, candidate.current_total, total_tokens));
         }
 
@@ -994,7 +1011,7 @@ impl Repository {
         let selected = pick_route(provider_slug, model, routes)?;
         let account = db
             .query(
-                "SELECT a.id, a.provider, a.name, a.base_url, a.enabled, a.note,
+                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.enabled, a.note,
                  EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
@@ -1213,6 +1230,7 @@ fn provider_from_row(row: Row) -> Result<ProviderDefinition> {
         display_name: row.get_text("display_name")?,
         protocol: row.get_text("protocol")?.parse()?,
         base_url: row.get_text("base_url")?,
+        default_model: normalize_optional(row.get_optional_text("default_model")?),
         proxy_path: row.get_text("proxy_path")?,
         auth_header: row.get_text("auth_header")?,
         auth_prefix: row.get_optional_text("auth_prefix")?,
@@ -1229,6 +1247,7 @@ fn account_from_row(row: Row) -> Result<Account> {
         provider: row.get_text("provider")?,
         name: row.get_text("name")?,
         base_url: normalize_optional(row.get_optional_text("base_url")?),
+        default_model: normalize_optional(row.get_optional_text("default_model")?),
         enabled: row.get_i64("enabled")? != 0,
         note: row.get_optional_text("note")?,
         has_secret: row.get_i64("has_secret")? != 0,
@@ -1350,7 +1369,7 @@ fn daily_stats_from_row(row: Row) -> Result<DailyStatsPoint> {
 
 fn fetch_provider_by_slug(db: &Connection, slug: &str) -> Result<Option<ProviderDefinition>> {
     db.query(
-        "SELECT slug, display_name, protocol, base_url, proxy_path, auth_header,
+        "SELECT slug, display_name, protocol, base_url, default_model, proxy_path, auth_header,
          auth_prefix, enabled, is_builtin, created_at, updated_at
          FROM providers WHERE slug = ?",
         &[SqlValue::Text(slug.into())],
@@ -1366,7 +1385,7 @@ fn fetch_provider_by_proxy_path(
     proxy_path: &str,
 ) -> Result<Option<ProviderDefinition>> {
     db.query(
-        "SELECT slug, display_name, protocol, base_url, proxy_path, auth_header,
+        "SELECT slug, display_name, protocol, base_url, default_model, proxy_path, auth_header,
          auth_prefix, enabled, is_builtin, created_at, updated_at
          FROM providers WHERE proxy_path = ?",
         &[SqlValue::Text(proxy_path.into())],
@@ -1462,7 +1481,9 @@ impl StoredLogRecord {
 }
 
 fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
+    ensure_column(db, "providers", "default_model", "TEXT")?;
     ensure_column(db, "accounts", "base_url", "TEXT")?;
+    ensure_column(db, "accounts", "default_model", "TEXT")?;
     ensure_column(db, "request_logs", "session_id", "TEXT")?;
     ensure_column(
         db,
@@ -1485,12 +1506,7 @@ fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn ensure_column(
-    db: &Connection,
-    table: &str,
-    column: &str,
-    definition: &str,
-) -> Result<bool> {
+fn ensure_column(db: &Connection, table: &str, column: &str, definition: &str) -> Result<bool> {
     let pragma = format!("PRAGMA table_info({table})");
     let exists = db.query(pragma.as_str(), &[])?.into_iter().any(|row| {
         row.get_text("name")
@@ -1874,7 +1890,12 @@ fn migrate_request_logs(db: &Connection, root: &Path) -> Result<()> {
             duration_ms,
             error_text,
             total_tokens: extract_total_tokens(&response_body)
-                .or_else(|| row.get_optional_i64("total_tokens").ok().flatten().map(|value| value as u64))
+                .or_else(|| {
+                    row.get_optional_i64("total_tokens")
+                        .ok()
+                        .flatten()
+                        .map(|value| value as u64)
+                })
                 .unwrap_or(0),
             request: StoredLogPart {
                 headers: headers_to_json_value(&request_headers),
@@ -1962,9 +1983,9 @@ fn seed_builtin_providers(db: &Connection) -> Result<()> {
         let now = timestamp();
         db.execute(
             "INSERT INTO providers (
-               slug, display_name, protocol, base_url, proxy_path, auth_header, auth_prefix,
+               slug, display_name, protocol, base_url, default_model, proxy_path, auth_header, auth_prefix,
                enabled, is_builtin, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, 1, ?, ?)
              ON CONFLICT(slug) DO NOTHING",
             &[
                 SqlValue::Text(builtin.slug.into()),
@@ -1993,6 +2014,9 @@ fn app_settings_from_db(db: &Connection, paths: &AppPaths) -> Result<AppSettings
         .and_then(|value| value.parse::<u16>().ok())
         .filter(|port| *port > 0)
         .unwrap_or(DEFAULT_PORT);
+    let allow_lan_access = get_setting_text(db, APP_SETTING_ALLOW_LAN_ACCESS_KEY)?
+        .map(|value| parse_bool_setting(&value))
+        .unwrap_or(false);
     let monitor_buffer_limit = get_setting_text(db, APP_SETTING_MONITOR_BUFFER_LIMIT_KEY)?
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|limit| *limit > 0)
@@ -2003,6 +2027,7 @@ fn app_settings_from_db(db: &Connection, paths: &AppPaths) -> Result<AppSettings
         .unwrap_or(DEFAULT_LOG_RETENTION_DAYS);
     Ok(AppSettings {
         daemon_port,
+        allow_lan_access,
         monitor_buffer_limit,
         log_retention_days,
         logs_dir: logs_dir.to_string_lossy().into_owned(),
@@ -2015,6 +2040,7 @@ fn app_settings_from_db(db: &Connection, paths: &AppPaths) -> Result<AppSettings
 fn default_app_settings(paths: &AppPaths) -> AppSettings {
     AppSettings {
         daemon_port: DEFAULT_PORT,
+        allow_lan_access: false,
         monitor_buffer_limit: DEFAULT_MONITOR_BUFFER_LIMIT,
         log_retention_days: DEFAULT_LOG_RETENTION_DAYS,
         logs_dir: default_logs_dir_for_root(&paths.root)
@@ -2057,6 +2083,11 @@ fn save_app_settings_with_db(
     )?;
     upsert_setting_text(
         db,
+        APP_SETTING_ALLOW_LAN_ACCESS_KEY,
+        if input.allow_lan_access { "1" } else { "0" },
+    )?;
+    upsert_setting_text(
+        db,
         APP_SETTING_MONITOR_BUFFER_LIMIT_KEY,
         &input.monitor_buffer_limit.to_string(),
     )?;
@@ -2071,6 +2102,13 @@ fn save_app_settings_with_db(
 
 fn default_logs_dir_for_root(root: &Path) -> PathBuf {
     root.join("logs")
+}
+
+fn parse_bool_setting(value: &str) -> bool {
+    matches!(
+        value.trim(),
+        "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
+    )
 }
 
 fn resolve_logs_dir_for_root(root: &Path, database: &Path) -> Result<PathBuf> {
@@ -2325,6 +2363,7 @@ CREATE TABLE IF NOT EXISTS providers (
   display_name TEXT NOT NULL,
   protocol TEXT NOT NULL,
   base_url TEXT NOT NULL,
+  default_model TEXT,
   proxy_path TEXT NOT NULL UNIQUE,
   auth_header TEXT NOT NULL,
   auth_prefix TEXT,
@@ -2338,6 +2377,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
   name TEXT NOT NULL,
+  default_model TEXT,
   enabled INTEGER NOT NULL,
   note TEXT,
   created_at TEXT NOT NULL,
@@ -2442,6 +2482,7 @@ CREATE TABLE IF NOT EXISTS providers (
   display_name TEXT NOT NULL,
   protocol TEXT NOT NULL,
   base_url TEXT NOT NULL,
+  default_model TEXT,
   proxy_path TEXT NOT NULL UNIQUE,
   auth_header TEXT NOT NULL,
   auth_prefix TEXT,
@@ -2455,6 +2496,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
   name TEXT NOT NULL,
+  default_model TEXT,
   enabled INTEGER NOT NULL,
   note TEXT,
   created_at TEXT NOT NULL,
@@ -2664,6 +2706,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 provider: "codex".into(),
                 name: "Primary".into(),
                 base_url: None,
+                default_model: None,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -2676,6 +2719,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 provider: "codex".into(),
                 name: "GPT-5".into(),
                 base_url: None,
+                default_model: None,
                 api_key: Some("sk-gpt5".into()),
                 note: None,
                 enabled: true,
@@ -2711,6 +2755,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 provider: "codex".into(),
                 name: "Primary".into(),
                 base_url: None,
+                default_model: None,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -2723,6 +2768,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 provider: "codex".into(),
                 name: "Backup".into(),
                 base_url: None,
+                default_model: None,
                 api_key: Some("sk-backup".into()),
                 note: None,
                 enabled: true,
@@ -2781,6 +2827,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 display_name: "OpenRouter".into(),
                 protocol: ApiProtocol::OpenAi,
                 base_url: "https://openrouter.ai/api/v1".into(),
+                default_model: Some("openrouter/default".into()),
                 proxy_path: "openrouter".into(),
                 auth_header: "Authorization".into(),
                 auth_prefix: Some("Bearer".into()),
@@ -2794,6 +2841,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 provider: provider.slug.clone(),
                 name: "OpenRouter Primary".into(),
                 base_url: None,
+                default_model: None,
                 api_key: Some("sk-openrouter".into()),
                 note: None,
                 enabled: true,
@@ -2805,6 +2853,10 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             .await
             .unwrap();
         assert_eq!(resolved.provider.proxy_path, "openrouter");
+        assert_eq!(
+            resolved.provider.default_model.as_deref(),
+            Some("openrouter/default")
+        );
         assert_eq!(resolved.account.id, account.id);
         assert_eq!(resolved.provider.protocol, ApiProtocol::OpenAi);
     }
@@ -2819,6 +2871,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 display_name: "OpenRouter".into(),
                 protocol: ApiProtocol::OpenAi,
                 base_url: "https://openrouter.ai/api/v1".into(),
+                default_model: None,
                 proxy_path: "openrouter".into(),
                 auth_header: "Authorization".into(),
                 auth_prefix: Some("Bearer".into()),
@@ -2832,6 +2885,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 provider: provider.slug.clone(),
                 name: "Regional Override".into(),
                 base_url: Some("https://regional.example.com/v1/".into()),
+                default_model: None,
                 api_key: Some("sk-regional".into()),
                 note: None,
                 enabled: true,
@@ -2855,6 +2909,36 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     }
 
     #[tokio::test]
+    async fn account_default_model_is_persisted_and_resolved() {
+        let repo = repo().await;
+        repo.unlock("password").await.unwrap();
+        let account = repo
+            .upsert_account(AccountInput {
+                id: None,
+                provider: "codex".into(),
+                name: "Pinned Model".into(),
+                base_url: None,
+                default_model: Some("gpt-5.4".into()),
+                api_key: Some("sk-pinned".into()),
+                note: None,
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        assert_eq!(account.default_model.as_deref(), Some("gpt-5.4"));
+
+        let fetched = repo.get_account(&account.id).await.unwrap();
+        assert_eq!(fetched.default_model.as_deref(), Some("gpt-5.4"));
+
+        let resolved = repo
+            .resolve_account("codex", Some("client-model"))
+            .await
+            .unwrap();
+        assert_eq!(resolved.account.id, account.id);
+        assert_eq!(resolved.account.default_model.as_deref(), Some("gpt-5.4"));
+    }
+
+    #[tokio::test]
     async fn reveal_account_secret_requires_password_without_unlocking_vault() {
         let repo = repo().await;
         repo.unlock("password").await.unwrap();
@@ -2864,6 +2948,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 provider: "codex".into(),
                 name: "Primary".into(),
                 base_url: None,
+                default_model: None,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -2982,6 +3067,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             &paths,
             &AppSettingsInput {
                 daemon_port: 8412,
+                allow_lan_access: true,
                 monitor_buffer_limit: 512,
                 log_retention_days: 45,
                 logs_dir: Some(custom_logs.to_string_lossy().into_owned()),
@@ -2989,6 +3075,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
         )
         .unwrap();
         assert_eq!(settings.daemon_port, 8412);
+        assert!(settings.allow_lan_access);
         assert_eq!(settings.monitor_buffer_limit, 512);
         assert_eq!(settings.log_retention_days, 45);
         assert_eq!(settings.logs_dir, custom_logs.to_string_lossy());
@@ -3003,6 +3090,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
         let _ = std::fs::remove_dir_all(&root);
         let paths = AppPaths::from_root(root).unwrap();
         let settings = super::load_app_settings(&paths).unwrap();
+        assert!(!settings.allow_lan_access);
         assert_eq!(settings.log_retention_days, DEFAULT_LOG_RETENTION_DAYS);
     }
 
@@ -3016,7 +3104,8 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             &db,
             &paths,
             &AppSettingsInput {
-                daemon_port: 7321,
+                daemon_port: crate::onboarding::DEFAULT_PORT,
+                allow_lan_access: false,
                 monitor_buffer_limit: 200,
                 log_retention_days: 30,
                 logs_dir: None,
