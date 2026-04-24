@@ -24,7 +24,7 @@ use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tauri::menu::{MenuBuilder, MenuEvent, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
-use tauri::{ActivationPolicy, AppHandle, Manager, Url, WindowEvent};
+use tauri::{ActivationPolicy, AppHandle, Manager, RunEvent, Url, WindowEvent};
 use toml_edit::{DocumentMut, Item, Table, value};
 use tracing::{error, warn};
 
@@ -320,13 +320,21 @@ fn main() {
                     }
                 }
             }
-            #[cfg(target_os = "macos")]
-            sync_macos_app_icon(app.handle());
-            ensure_tray(app.handle())?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .inspect_err(|error| error!("tauri run failure: {error}"))
+        .build(tauri::generate_context!())
+        .inspect_err(|error| error!("tauri build failure: {error}"))
+        .map(|app| {
+            app.run(|app_handle, event| {
+                if matches!(event, RunEvent::Ready) {
+                    #[cfg(target_os = "macos")]
+                    sync_macos_app_icon(app_handle);
+                    if let Err(error) = ensure_tray(app_handle) {
+                        warn!("failed to initialize tray on ready event: {error:#}");
+                    }
+                }
+            });
+        })
         .ok();
     shutdown_supervisor.shutdown();
 }
@@ -1377,6 +1385,7 @@ fn apply_tray_menu(app: &AppHandle, locale: &str, providers: Vec<TrayProviderSta
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             tray.set_icon_as_template(true)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            reinforce_macos_tray_template(&tray);
         }
         return Ok(());
     }
@@ -1397,6 +1406,11 @@ fn apply_tray_menu(app: &AppHandle, locale: &str, providers: Vec<TrayProviderSta
     }
     builder
         .build(app)
+        .map(|tray| {
+            #[cfg(target_os = "macos")]
+            reinforce_macos_tray_template(&tray);
+            tray
+        })
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(())
 }
@@ -1407,6 +1421,31 @@ fn load_macos_tray_icon() -> Result<tauri::image::Image<'static>> {
         .map(|icon| icon.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))
         .context("failed to load tray-template.png")
+}
+
+#[cfg(target_os = "macos")]
+fn reinforce_macos_tray_template<R: tauri::Runtime>(tray: &tauri::tray::TrayIcon<R>) {
+    use objc2::{AllocAnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSImage, NSImageScaling};
+    use objc2_foundation::{NSData, NSSize};
+
+    if let Err(error) = tray.with_inner_tray_icon(|inner| {
+        if let Some(status_item) = inner.ns_status_item() {
+            if let Some(mtm) = MainThreadMarker::new() {
+                if let Some(button) = status_item.button(mtm) {
+                    let data = NSData::with_bytes(MACOS_TRAY_ICON_PNG);
+                    if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+                        image.setSize(NSSize::new(18.0, 18.0));
+                        image.setTemplate(true);
+                        button.setImageScaling(NSImageScaling::ScaleProportionallyDown);
+                        button.setImage(Some(&image));
+                    }
+                }
+            }
+        }
+    }) {
+        warn!("failed to reinforce macOS tray template image: {error}");
+    }
 }
 
 fn build_tray_menu(
