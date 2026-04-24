@@ -51,6 +51,8 @@ const TRAY_MENU_SET_DEFAULT_PREFIX: &str = "tray.set_default";
 const TRAY_MENU_PROVIDER_HEADING_PREFIX: &str = "tray.provider_heading";
 #[cfg(target_os = "macos")]
 const MACOS_APP_ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
+#[cfg(target_os = "macos")]
+const MACOS_TRAY_ICON_PNG: &[u8] = include_bytes!("../icons/tray-template.png");
 const LOCAL_ROUTER_MANAGED_SECRET: &str = "localairouter-managed";
 
 #[derive(Default)]
@@ -1369,6 +1371,13 @@ fn apply_tray_menu(app: &AppHandle, locale: &str, providers: Vec<TrayProviderSta
         tray.set_menu(Some(menu))
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let _ = tray.set_tooltip(Some(tray_tooltip(&locale)));
+        #[cfg(target_os = "macos")]
+        {
+            tray.set_icon(Some(load_macos_tray_icon()?))
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            tray.set_icon_as_template(true)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        }
         return Ok(());
     }
 
@@ -1376,6 +1385,13 @@ fn apply_tray_menu(app: &AppHandle, locale: &str, providers: Vec<TrayProviderSta
         .menu(&menu)
         .tooltip(tray_tooltip(&locale))
         .show_menu_on_left_click(true);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .icon(load_macos_tray_icon()?)
+            .icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
     }
@@ -1383,6 +1399,14 @@ fn apply_tray_menu(app: &AppHandle, locale: &str, providers: Vec<TrayProviderSta
         .build(app)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn load_macos_tray_icon() -> Result<tauri::image::Image<'static>> {
+    tauri::image::Image::from_bytes(MACOS_TRAY_ICON_PNG)
+        .map(|icon| icon.to_owned())
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
+        .context("failed to load tray-template.png")
 }
 
 fn build_tray_menu(
