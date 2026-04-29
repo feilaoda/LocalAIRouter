@@ -459,34 +459,26 @@ fn find_total_tokens(value: &serde_json::Value) -> Option<u64> {
 fn total_tokens_from_usage_object(map: &serde_json::Map<String, serde_json::Value>) -> Option<u64> {
     let prompt_tokens = token_value(map.get("prompt_tokens"));
     let input_tokens = token_value(map.get("input_tokens"));
-    let cached_tokens = map
-        .get("input_tokens_details")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|details| token_value(details.get("cached_tokens")));
     let cache_creation_tokens = token_value(map.get("cache_creation_input_tokens"));
     let cache_read_tokens = token_value(map.get("cache_read_input_tokens"));
     let completion_tokens = token_value(map.get("completion_tokens"));
     let output_tokens = token_value(map.get("output_tokens"));
     let total_tokens = token_value(map.get("total_tokens"));
 
-    let cache_discount = cached_tokens.unwrap_or(0) + cache_read_tokens.unwrap_or(0);
+    let cache_input_tokens = cache_creation_tokens.unwrap_or(0) + cache_read_tokens.unwrap_or(0);
     let input_base = prompt_tokens.or(input_tokens);
     let input = match input_base {
-        Some(base) => {
-            Some(base.saturating_sub(cache_discount) + cache_creation_tokens.unwrap_or(0))
-        }
-        None => cache_creation_tokens,
+        Some(base) => Some(base + cache_input_tokens),
+        None if cache_input_tokens > 0 => Some(cache_input_tokens),
+        None => None,
     };
     let output = completion_tokens.or(output_tokens);
 
-    match total_tokens {
-        Some(total) => Some(total.saturating_sub(cache_discount)),
-        None => match (input, output) {
-            (Some(input), Some(output)) => Some(input + output),
-            (Some(input), None) => Some(input),
-            (None, Some(output)) => Some(output),
-            (None, None) => None,
-        },
+    match (input, output) {
+        (Some(input), Some(output)) => Some(input + output),
+        (Some(input), None) => Some(input),
+        (None, Some(output)) => Some(output),
+        (None, None) => total_tokens,
     }
 }
 
@@ -547,10 +539,18 @@ mod tests {
     }
 
     #[test]
-    fn extracts_effective_total_tokens_when_cached_tokens_are_reported() {
+    fn extracts_total_tokens_without_discounting_cached_tokens() {
         let total = extract_total_tokens(
             r#"{"usage":{"input_tokens":192662,"input_tokens_details":{"cached_tokens":192512},"output_tokens":893,"total_tokens":193555}}"#,
         );
-        assert_eq!(total, Some(1043));
+        assert_eq!(total, Some(193555));
+    }
+
+    #[test]
+    fn includes_anthropic_cache_read_tokens_in_input_total() {
+        let total = extract_total_tokens(
+            r#"{"usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":7}}"#,
+        );
+        assert_eq!(total, Some(157));
     }
 }

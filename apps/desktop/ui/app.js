@@ -45,8 +45,8 @@ const ZH_MESSAGES = {
   Tokens: "Tokens",
   "Grouped by your desktop local day. Restarting the app does not reset these counts.":
     "按你桌面当前时区的本地自然日分组。重启应用后这些统计不会丢失。",
-  "Only persisted effective token usage is counted here.":
-    "这里只统计已经持久化入库的有效 token usage，会扣除缓存命中的部分。",
+  "Only persisted input + output token usage is counted here. Cached tokens are included when providers report them.":
+    "这里只统计已经持久化入库的输入 + 输出 token；上游返回缓存 token 时也会计入。",
   Registry: "注册表",
   "Provider Catalog": "Provider列表",
   "Built-ins can be tuned in place. Custom providers can be edited or removed once no accounts and routes depend on them.":
@@ -489,9 +489,10 @@ const ZH_MESSAGES = {
   "HTTP status below 400": "HTTP 状态码低于 400",
   "Today's Tokens": "今日 Tokens",
   "Total Tokens": "总 Tokens",
-  "Summed from today's effective upstream usage": "汇总今天上游返回的有效 usage",
-  "Only effective token usage is counted. Cached prompt tokens are excluded when providers report them.":
-    "这里只统计有效 token usage；如果上游返回了缓存命中 token，会自动扣除。",
+  "Summed from today's upstream input + output usage":
+    "汇总今天上游返回的输入 + 输出 usage",
+  "Input and output tokens are counted. Cached tokens are included when providers report them.":
+    "统计输入和输出 token；上游返回缓存 token 时也会计入。",
   "Avg Latency": "平均延迟",
   "Across today's successful requests": "仅基于今天成功请求统计",
   "P95 Latency": "P95 延迟",
@@ -1909,7 +1910,7 @@ function renderMetrics() {
       label: t("Today's Tokens"),
       value: formatTokenCount(tokenUsage.total),
       note: t(
-        "Only effective token usage is counted. Cached prompt tokens are excluded when providers report them.",
+        "Input and output tokens are counted. Cached tokens are included when providers report them.",
       ),
       tone: "warm",
     },
@@ -4721,20 +4722,20 @@ function extractTokenUsageFromPayload(payload) {
     const outputTokens = finiteNumber(usage.output_tokens);
     const totalTokens = finiteNumber(usage.total_tokens);
 
-    const inputBase =
-      promptTokens ?? inputTokens ?? cacheCreationTokens ?? cacheReadTokens ?? null;
-    const outputBase = completionTokens ?? outputTokens ?? null;
+    const cacheInput =
+      (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0);
+    const inputBase = promptTokens ?? inputTokens ?? null;
     const input =
-      inputBase == null
-        ? null
-        : inputBase + (promptTokens == null ? cacheCreationTokens ?? 0 : 0) +
-          (promptTokens == null ? cacheReadTokens ?? 0 : 0);
-    const output = outputBase;
+      inputBase != null
+        ? inputBase + cacheInput
+        : cacheInput > 0
+          ? cacheInput
+          : null;
+    const output = completionTokens ?? outputTokens ?? null;
     const total =
-      totalTokens ??
-      (input != null || output != null
+      input != null || output != null
         ? (input ?? 0) + (output ?? 0)
-        : null);
+        : totalTokens ?? null;
 
     const normalized = normalizeTokenUsage({ input, output, total });
     if (hasTokenUsage(normalized)) {

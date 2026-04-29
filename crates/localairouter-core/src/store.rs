@@ -30,7 +30,7 @@ const APP_SETTING_MONITOR_BUFFER_LIMIT_KEY: &str = "monitor_buffer_limit";
 const APP_SETTING_LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 const APP_SETTING_LOGS_DIR_KEY: &str = "logs_dir";
 const APP_SETTING_TOTAL_TOKENS_VERSION_KEY: &str = "total_tokens_version";
-const CURRENT_TOTAL_TOKENS_VERSION: &str = "2";
+const CURRENT_TOTAL_TOKENS_VERSION: &str = "3";
 const DATA_DIR_ENV: &str = "LOCALAIROUTER_DATA_DIR";
 const LEGACY_DATA_DIR_ENV: &str = "LOCALOPENROUTER_DATA_DIR";
 const OLDER_DATA_DIR_ENV: &str = "LOCALROUTER_DATA_DIR";
@@ -3270,7 +3270,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             db.execute(
                 "UPDATE request_logs SET total_tokens = ? WHERE id = ?",
                 &[
-                    crate::sqlite::SqlValue::Integer(193_555),
+                    crate::sqlite::SqlValue::Integer(1_043),
                     crate::sqlite::SqlValue::Text(stored.id.clone()),
                 ],
             )
@@ -3284,6 +3284,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
         assert_eq!(report.skipped_logs, 0);
 
         let rebuilt = repo.get_log(&stored.id).await.unwrap();
-        assert_eq!(rebuilt.total_tokens, 1_043);
+        assert_eq!(rebuilt.total_tokens, 193_555);
     }
 }
