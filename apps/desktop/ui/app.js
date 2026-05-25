@@ -4786,6 +4786,8 @@ function extractTokenUsageFromPayload(payload) {
   for (const usage of usageCandidates) {
     const promptTokens = finiteNumber(usage.prompt_tokens);
     const inputTokens = finiteNumber(usage.input_tokens);
+    const promptCacheHitTokens = finiteNumber(usage.prompt_cache_hit_tokens);
+    const promptCacheMissTokens = finiteNumber(usage.prompt_cache_miss_tokens);
     const cacheCreationTokens = finiteNumber(usage.cache_creation_input_tokens);
     const cacheReadTokens = finiteNumber(usage.cache_read_input_tokens);
     const completionTokens = finiteNumber(usage.completion_tokens);
@@ -4794,7 +4796,11 @@ function extractTokenUsageFromPayload(payload) {
 
     const cacheInput =
       (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0);
-    const inputBase = promptTokens ?? inputTokens ?? null;
+    const deepseekInput =
+      promptCacheHitTokens != null || promptCacheMissTokens != null
+        ? (promptCacheHitTokens ?? 0) + (promptCacheMissTokens ?? 0)
+        : null;
+    const inputBase = promptTokens ?? inputTokens ?? deepseekInput ?? null;
     const input =
       inputBase != null
         ? inputBase + cacheInput

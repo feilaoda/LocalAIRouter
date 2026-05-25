@@ -1101,10 +1101,20 @@ fn translate_usage(usage: Option<&JsonValue>) -> JsonValue {
             "total_tokens": 0,
         });
     };
-    let input_tokens = usage
-        .get("prompt_tokens")
-        .and_then(JsonValue::as_u64)
-        .unwrap_or(0);
+    let prompt_tokens = usage.get("prompt_tokens").and_then(JsonValue::as_u64);
+    let prompt_cache_hit_tokens = usage
+        .get("prompt_cache_hit_tokens")
+        .and_then(JsonValue::as_u64);
+    let prompt_cache_miss_tokens = usage
+        .get("prompt_cache_miss_tokens")
+        .and_then(JsonValue::as_u64);
+    let deepseek_prompt_tokens =
+        if prompt_cache_hit_tokens.is_some() || prompt_cache_miss_tokens.is_some() {
+            Some(prompt_cache_hit_tokens.unwrap_or(0) + prompt_cache_miss_tokens.unwrap_or(0))
+        } else {
+            None
+        };
+    let input_tokens = prompt_tokens.or(deepseek_prompt_tokens).unwrap_or(0);
     let output_tokens = usage
         .get("completion_tokens")
         .and_then(JsonValue::as_u64)
@@ -1122,6 +1132,7 @@ fn translate_usage(usage: Option<&JsonValue>) -> JsonValue {
                 .get("prompt_tokens_details")
                 .and_then(|value| value.get("cached_tokens"))
                 .and_then(JsonValue::as_u64)
+                .or(prompt_cache_hit_tokens)
                 .unwrap_or(0),
         },
         "output_tokens_details": {
@@ -1289,6 +1300,35 @@ mod tests {
         assert!(text.contains("event: response.created"));
         assert!(text.contains("event: response.output_text.delta"));
         assert!(text.contains("event: response.completed"));
+    }
+
+    #[test]
+    fn converts_deepseek_cache_usage_to_response_usage() {
+        let request = r#"{"model":"deepseek-v4","input":"hello"}"#;
+        let upstream = Bytes::from(
+            r#"{
+              "id":"chatcmpl_1",
+              "created":123,
+              "model":"deepseek-v4",
+              "choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],
+              "usage":{
+                "prompt_cache_hit_tokens":192000,
+                "prompt_cache_miss_tokens":107,
+                "completion_tokens":51
+              }
+            }"#,
+        );
+        let converted =
+            convert_deepseek_v4_response("/responses", StatusCode::OK, request, upstream).unwrap();
+        let body: JsonValue = serde_json::from_slice(&converted.body).unwrap();
+
+        assert_eq!(body["usage"]["input_tokens"], 192_107);
+        assert_eq!(
+            body["usage"]["input_tokens_details"]["cached_tokens"],
+            192_000
+        );
+        assert_eq!(body["usage"]["output_tokens"], 51);
+        assert_eq!(body["usage"]["total_tokens"], 192_158);
     }
 
     #[test]

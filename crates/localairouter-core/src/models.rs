@@ -500,14 +500,22 @@ fn find_total_tokens(value: &serde_json::Value) -> Option<u64> {
 fn total_tokens_from_usage_object(map: &serde_json::Map<String, serde_json::Value>) -> Option<u64> {
     let prompt_tokens = token_value(map.get("prompt_tokens"));
     let input_tokens = token_value(map.get("input_tokens"));
+    let prompt_cache_hit_tokens = token_value(map.get("prompt_cache_hit_tokens"));
+    let prompt_cache_miss_tokens = token_value(map.get("prompt_cache_miss_tokens"));
     let cache_creation_tokens = token_value(map.get("cache_creation_input_tokens"));
     let cache_read_tokens = token_value(map.get("cache_read_input_tokens"));
     let completion_tokens = token_value(map.get("completion_tokens"));
     let output_tokens = token_value(map.get("output_tokens"));
     let total_tokens = token_value(map.get("total_tokens"));
 
+    let deepseek_prompt_tokens =
+        if prompt_cache_hit_tokens.is_some() || prompt_cache_miss_tokens.is_some() {
+            Some(prompt_cache_hit_tokens.unwrap_or(0) + prompt_cache_miss_tokens.unwrap_or(0))
+        } else {
+            None
+        };
     let cache_input_tokens = cache_creation_tokens.unwrap_or(0) + cache_read_tokens.unwrap_or(0);
-    let input_base = prompt_tokens.or(input_tokens);
+    let input_base = prompt_tokens.or(input_tokens).or(deepseek_prompt_tokens);
     let input = match input_base {
         Some(base) => Some(base + cache_input_tokens),
         None if cache_input_tokens > 0 => Some(cache_input_tokens),
@@ -593,5 +601,13 @@ mod tests {
             r#"{"usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":7}}"#,
         );
         assert_eq!(total, Some(157));
+    }
+
+    #[test]
+    fn extracts_deepseek_cache_usage_when_prompt_tokens_are_absent() {
+        let total = extract_total_tokens(
+            r#"{"usage":{"prompt_cache_hit_tokens":192000,"prompt_cache_miss_tokens":107,"completion_tokens":51}}"#,
+        );
+        assert_eq!(total, Some(192_158));
     }
 }

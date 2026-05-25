@@ -30,7 +30,7 @@ const APP_SETTING_MONITOR_BUFFER_LIMIT_KEY: &str = "monitor_buffer_limit";
 const APP_SETTING_LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 const APP_SETTING_LOGS_DIR_KEY: &str = "logs_dir";
 const APP_SETTING_TOTAL_TOKENS_VERSION_KEY: &str = "total_tokens_version";
-const CURRENT_TOTAL_TOKENS_VERSION: &str = "4";
+const CURRENT_TOTAL_TOKENS_VERSION: &str = "5";
 const DATA_DIR_ENV: &str = "LOCALAIROUTER_DATA_DIR";
 const LEGACY_DATA_DIR_ENV: &str = "LOCALOPENROUTER_DATA_DIR";
 const OLDER_DATA_DIR_ENV: &str = "LOCALROUTER_DATA_DIR";
@@ -759,10 +759,6 @@ impl Repository {
             .and_hms_opt(0, 0, 0)
             .ok_or_else(|| LocalAIRouterError::Message("invalid stats end day".into()))?
             - offset;
-        let today_start_utc = end_day
-            .and_hms_opt(0, 0, 0)
-            .ok_or_else(|| LocalAIRouterError::Message("invalid stats current day".into()))?
-            - offset;
         let modifier = if utc_offset_minutes >= 0 {
             format!("+{utc_offset_minutes} minutes")
         } else {
@@ -774,7 +770,7 @@ impl Repository {
             rebuild_total_tokens_for_time_range(
                 &db,
                 &self.paths,
-                &today_start_utc.and_utc().to_rfc3339(),
+                &start_utc.and_utc().to_rfc3339(),
                 &end_utc.and_utc().to_rfc3339(),
                 true,
             )?;
