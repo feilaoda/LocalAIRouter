@@ -48,6 +48,44 @@ impl FromStr for ApiProtocol {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum AccountConverter {
+    #[default]
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "deepseek-v4-to-openai")]
+    DeepSeekV4ToOpenAi,
+}
+
+impl AccountConverter {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::DeepSeekV4ToOpenAi => "deepseek-v4-to-openai",
+        }
+    }
+}
+
+impl Display for AccountConverter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for AccountConverter {
+    type Err = LocalAIRouterError;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "" | "none" => Ok(Self::None),
+            "deepseek-v4-to-openai" | "deepseek-v4-openai" => Ok(Self::DeepSeekV4ToOpenAi),
+            other => Err(LocalAIRouterError::Validation(format!(
+                "unsupported account converter `{other}`"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderDefinition {
@@ -169,6 +207,7 @@ pub struct Account {
     pub name: String,
     pub base_url: Option<String>,
     pub default_model: Option<String>,
+    pub converter: AccountConverter,
     pub enabled: bool,
     pub note: Option<String>,
     pub has_secret: bool,
@@ -185,6 +224,8 @@ pub struct AccountInput {
     pub base_url: Option<String>,
     #[serde(default)]
     pub default_model: Option<String>,
+    #[serde(default)]
+    pub converter: AccountConverter,
     pub api_key: Option<String>,
     pub note: Option<String>,
     #[serde(default = "default_true")]

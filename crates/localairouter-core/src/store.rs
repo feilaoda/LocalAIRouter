@@ -12,11 +12,11 @@ use uuid::Uuid;
 use crate::crypto;
 use crate::error::{LocalAIRouterError, Result};
 use crate::models::{
-    Account, AccountInput, ApiProtocol, AppSettings, AppSettingsInput, DEFAULT_LOG_RETENTION_DAYS,
-    DEFAULT_MONITOR_BUFFER_LIMIT, DailyStatsPoint, DailyStatsQuery, DeleteResponse, HealthResponse,
-    LogQuery, ProviderDefinition, ProviderInput, RequestLog, RequestLogInput, ResolvedAccount,
-    RevealedSecret, RouteBinding, RouteBindingInput, TokenRebuildReport, UnlockResponse,
-    extract_session_id, extract_total_tokens,
+    Account, AccountConverter, AccountInput, ApiProtocol, AppSettings, AppSettingsInput,
+    DEFAULT_LOG_RETENTION_DAYS, DEFAULT_MONITOR_BUFFER_LIMIT, DailyStatsPoint, DailyStatsQuery,
+    DeleteResponse, HealthResponse, LogQuery, ProviderDefinition, ProviderInput, RequestLog,
+    RequestLogInput, ResolvedAccount, RevealedSecret, RouteBinding, RouteBindingInput,
+    TokenRebuildReport, UnlockResponse, extract_session_id, extract_total_tokens,
 };
 use crate::onboarding::{DEFAULT_PORT, guide_for_target};
 use crate::sqlite::{Connection, Row, SqlValue};
@@ -30,7 +30,7 @@ const APP_SETTING_MONITOR_BUFFER_LIMIT_KEY: &str = "monitor_buffer_limit";
 const APP_SETTING_LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 const APP_SETTING_LOGS_DIR_KEY: &str = "logs_dir";
 const APP_SETTING_TOTAL_TOKENS_VERSION_KEY: &str = "total_tokens_version";
-const CURRENT_TOTAL_TOKENS_VERSION: &str = "3";
+const CURRENT_TOTAL_TOKENS_VERSION: &str = "4";
 const DATA_DIR_ENV: &str = "LOCALAIROUTER_DATA_DIR";
 const LEGACY_DATA_DIR_ENV: &str = "LOCALOPENROUTER_DATA_DIR";
 const OLDER_DATA_DIR_ENV: &str = "LOCALROUTER_DATA_DIR";
@@ -459,7 +459,7 @@ impl Repository {
     pub async fn list_accounts(&self) -> Result<Vec<Account>> {
         let db = self.db.lock().await;
         let rows = db.query(
-            "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.enabled, a.note,
+            "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
              EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
              a.created_at, a.updated_at
              FROM accounts a ORDER BY a.provider, a.name",
@@ -476,6 +476,7 @@ impl Repository {
         let now = timestamp();
         let base_url = normalize_optional_base_url(input.base_url)?;
         let default_model = normalize_optional(input.default_model);
+        let converter = input.converter;
         let note = normalize_optional(input.note);
 
         let db = self.db.lock().await;
@@ -485,6 +486,13 @@ impl Repository {
             return Err(LocalAIRouterError::Validation(format!(
                 "provider `{provider_slug}` is disabled"
             )));
+        }
+        if input.converter == AccountConverter::DeepSeekV4ToOpenAi
+            && provider.protocol != ApiProtocol::OpenAi
+        {
+            return Err(LocalAIRouterError::Validation(
+                "deepseek v4 converter can only be used with OpenAI protocol providers".into(),
+            ));
         }
 
         let existing = db.query(
@@ -498,13 +506,14 @@ impl Repository {
             .unwrap_or_else(|| now.clone());
 
         db.execute(
-            "INSERT INTO accounts (id, provider, name, base_url, default_model, enabled, note, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO accounts (id, provider, name, base_url, default_model, converter, enabled, note, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                provider = excluded.provider,
                name = excluded.name,
                base_url = excluded.base_url,
                default_model = excluded.default_model,
+               converter = excluded.converter,
                enabled = excluded.enabled,
                note = excluded.note,
                updated_at = excluded.updated_at",
@@ -517,6 +526,7 @@ impl Repository {
                     .clone()
                     .map(SqlValue::Text)
                     .unwrap_or(SqlValue::Null),
+                SqlValue::Text(converter.as_str().into()),
                 SqlValue::Integer(i64::from(input.enabled)),
                 note.clone().map(SqlValue::Text).unwrap_or(SqlValue::Null),
                 SqlValue::Text(created_at),
@@ -594,7 +604,7 @@ impl Repository {
         let db = self.db.lock().await;
         let row = db
             .query(
-                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.enabled, a.note,
+                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
                  EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
@@ -726,7 +736,12 @@ impl Repository {
 
         let db = self.db.lock().await;
         let rows = db.query(sql.as_str(), &params)?;
-        rows.into_iter().map(log_from_row).collect()
+        let mut logs = rows
+            .into_iter()
+            .map(log_from_row)
+            .collect::<Result<Vec<_>>>()?;
+        refresh_query_log_totals(&db, &self.paths, &mut logs)?;
+        Ok(logs)
     }
 
     pub async fn query_daily_stats(&self, query: DailyStatsQuery) -> Result<Vec<DailyStatsPoint>> {
@@ -744,6 +759,10 @@ impl Repository {
             .and_hms_opt(0, 0, 0)
             .ok_or_else(|| LocalAIRouterError::Message("invalid stats end day".into()))?
             - offset;
+        let today_start_utc = end_day
+            .and_hms_opt(0, 0, 0)
+            .ok_or_else(|| LocalAIRouterError::Message("invalid stats current day".into()))?
+            - offset;
         let modifier = if utc_offset_minutes >= 0 {
             format!("+{utc_offset_minutes} minutes")
         } else {
@@ -751,6 +770,15 @@ impl Repository {
         };
 
         let db = self.db.lock().await;
+        if !total_tokens_version_is_current(&db)? {
+            rebuild_total_tokens_for_time_range(
+                &db,
+                &self.paths,
+                &today_start_utc.and_utc().to_rfc3339(),
+                &end_utc.and_utc().to_rfc3339(),
+                true,
+            )?;
+        }
         let rows = db.query(
             "SELECT date(datetime(created_at), ?) AS day,
                     COUNT(*) AS request_count,
@@ -771,95 +799,10 @@ impl Repository {
     }
 
     pub async fn rebuild_total_tokens(&self) -> Result<TokenRebuildReport> {
-        let rows = {
-            let db = self.db.lock().await;
-            db.query(
-                "SELECT id, total_tokens, response_body, response_body_path, log_file_path
-                 FROM request_logs
-                 ORDER BY created_at ASC",
-                &[],
-            )?
-        };
-
-        let mut file_groups: BTreeMap<String, Vec<RebuildCandidate>> = BTreeMap::new();
-        let mut inline_rows = Vec::new();
-
-        for row in rows {
-            let candidate = RebuildCandidate {
-                id: row.get_text("id")?,
-                current_total: row.get_optional_i64("total_tokens")?.unwrap_or(0) as u64,
-                response_body: row.get_text("response_body")?,
-                response_body_path: row.get_optional_text("response_body_path")?,
-                log_file_path: row.get_optional_text("log_file_path")?,
-            };
-            if let Some(log_file_path) = candidate.log_file_path.clone() {
-                file_groups
-                    .entry(log_file_path)
-                    .or_default()
-                    .push(candidate);
-            } else {
-                inline_rows.push(candidate);
-            }
-        }
-
-        let mut computed = Vec::new();
-        let mut skipped_logs = 0_u64;
-
-        for (log_file_path, candidates) in file_groups {
-            let token_map = rebuild_log_totals_from_file(&self.paths, &log_file_path, &candidates)?;
-            for candidate in candidates {
-                if let Some(total_tokens) = token_map.get(candidate.id.as_str()).copied() {
-                    computed.push((candidate.id, candidate.current_total, total_tokens));
-                } else {
-                    skipped_logs += 1;
-                }
-            }
-        }
-
-        for candidate in inline_rows {
-            let response_body = read_log_artifact(
-                &self.paths,
-                candidate.response_body_path.clone(),
-                candidate.response_body.clone(),
-            )?;
-            let total_tokens =
-                extract_total_tokens(&response_body).unwrap_or(candidate.current_total);
-            computed.push((candidate.id, candidate.current_total, total_tokens));
-        }
-
-        let rebuilt_logs = computed.len() as u64;
-        let updated_logs = computed
-            .iter()
-            .filter(|(_, current_total, next_total)| current_total != next_total)
-            .count() as u64;
-
         let db = self.db.lock().await;
-        db.execute_batch("BEGIN IMMEDIATE;")?;
-        let update_result = (|| -> Result<()> {
-            for (id, _, total_tokens) in &computed {
-                db.execute(
-                    "UPDATE request_logs SET total_tokens = ? WHERE id = ?",
-                    &[
-                        SqlValue::Integer(*total_tokens as i64),
-                        SqlValue::Text(id.clone()),
-                    ],
-                )?;
-            }
-            mark_total_tokens_version(&db)?;
-            db.execute_batch("COMMIT;")?;
-            Ok(())
-        })();
-        if let Err(error) = update_result {
-            let _ = db.execute_batch("ROLLBACK;");
-            return Err(error);
-        }
-
-        Ok(TokenRebuildReport {
-            total_logs: rebuilt_logs + skipped_logs,
-            rebuilt_logs,
-            updated_logs,
-            skipped_logs,
-        })
+        let candidates = load_rebuild_candidates(&db, "", &[])?;
+        let (report, _) = rebuild_total_tokens_for_candidates(&db, &self.paths, candidates, true)?;
+        Ok(report)
     }
 
     pub async fn get_log(&self, id: &str) -> Result<RequestLog> {
@@ -1011,7 +954,7 @@ impl Repository {
         let selected = pick_route(provider_slug, model, routes)?;
         let account = db
             .query(
-                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.enabled, a.note,
+                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
                  EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
@@ -1248,6 +1191,11 @@ fn account_from_row(row: Row) -> Result<Account> {
         name: row.get_text("name")?,
         base_url: normalize_optional(row.get_optional_text("base_url")?),
         default_model: normalize_optional(row.get_optional_text("default_model")?),
+        converter: row
+            .get_optional_text("converter")?
+            .as_deref()
+            .unwrap_or("none")
+            .parse()?,
         enabled: row.get_i64("enabled")? != 0,
         note: row.get_optional_text("note")?,
         has_secret: row.get_i64("has_secret")? != 0,
@@ -1484,6 +1432,7 @@ fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
     ensure_column(db, "providers", "default_model", "TEXT")?;
     ensure_column(db, "accounts", "base_url", "TEXT")?;
     ensure_column(db, "accounts", "default_model", "TEXT")?;
+    ensure_column(db, "accounts", "converter", "TEXT NOT NULL DEFAULT 'none'")?;
     ensure_column(db, "request_logs", "session_id", "TEXT")?;
     ensure_column(
         db,
@@ -1502,7 +1451,6 @@ fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
     migrate_builtin_provider_catalog(db)?;
     retire_legacy_builtin_custom_provider(db)?;
     migrate_request_logs(db, root)?;
-    mark_total_tokens_version(db)?;
     Ok(())
 }
 
@@ -1736,6 +1684,179 @@ fn read_log_artifact(paths: &AppPaths, path: Option<String>, fallback: String) -
         }
     }
     Ok(fallback)
+}
+
+fn refresh_query_log_totals(
+    db: &Connection,
+    paths: &AppPaths,
+    logs: &mut [RequestLog],
+) -> Result<()> {
+    if total_tokens_version_is_current(db)? {
+        return Ok(());
+    }
+    let candidates = logs
+        .iter()
+        .filter_map(|log| {
+            log.log_file_path
+                .as_ref()
+                .map(|log_file_path| RebuildCandidate {
+                    id: log.id.clone(),
+                    current_total: log.total_tokens,
+                    response_body: String::new(),
+                    response_body_path: None,
+                    log_file_path: Some(log_file_path.clone()),
+                })
+        })
+        .collect::<Vec<_>>();
+
+    let (_, totals) = rebuild_total_tokens_for_candidates(db, paths, candidates, true)?;
+    for log in logs {
+        if let Some(total_tokens) = totals.get(log.id.as_str()).copied() {
+            log.total_tokens = total_tokens;
+        }
+    }
+    Ok(())
+}
+
+fn rebuild_total_tokens_for_time_range(
+    db: &Connection,
+    paths: &AppPaths,
+    created_from: &str,
+    created_to: &str,
+    mark_version: bool,
+) -> Result<TokenRebuildReport> {
+    let candidates = load_rebuild_candidates(
+        db,
+        "WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)",
+        &[
+            SqlValue::Text(created_from.to_owned()),
+            SqlValue::Text(created_to.to_owned()),
+        ],
+    )?;
+    let (report, _) = rebuild_total_tokens_for_candidates(db, paths, candidates, mark_version)?;
+    Ok(report)
+}
+
+fn load_rebuild_candidates(
+    db: &Connection,
+    where_clause: &str,
+    params: &[SqlValue],
+) -> Result<Vec<RebuildCandidate>> {
+    let sql = format!(
+        "SELECT id, total_tokens, response_body, response_body_path, log_file_path
+         FROM request_logs
+         {where_clause}
+         ORDER BY created_at ASC"
+    );
+    db.query(sql.as_str(), params)?
+        .into_iter()
+        .map(|row| {
+            Ok(RebuildCandidate {
+                id: row.get_text("id")?,
+                current_total: row.get_optional_i64("total_tokens")?.unwrap_or(0) as u64,
+                response_body: row.get_text("response_body")?,
+                response_body_path: row.get_optional_text("response_body_path")?,
+                log_file_path: row.get_optional_text("log_file_path")?,
+            })
+        })
+        .collect()
+}
+
+fn rebuild_total_tokens_for_candidates(
+    db: &Connection,
+    paths: &AppPaths,
+    candidates: Vec<RebuildCandidate>,
+    mark_version: bool,
+) -> Result<(TokenRebuildReport, HashMap<String, u64>)> {
+    let mut file_groups: BTreeMap<String, Vec<RebuildCandidate>> = BTreeMap::new();
+    let mut inline_rows = Vec::new();
+
+    for candidate in candidates {
+        if let Some(log_file_path) = candidate.log_file_path.clone() {
+            file_groups
+                .entry(log_file_path)
+                .or_default()
+                .push(candidate);
+        } else {
+            inline_rows.push(candidate);
+        }
+    }
+
+    let mut computed = Vec::new();
+    let mut skipped_logs = 0_u64;
+
+    for (log_file_path, candidates) in file_groups {
+        let token_map = rebuild_log_totals_from_file(paths, &log_file_path, &candidates)?;
+        for candidate in candidates {
+            if let Some(total_tokens) = token_map.get(candidate.id.as_str()).copied() {
+                computed.push((candidate.id, candidate.current_total, total_tokens));
+            } else {
+                skipped_logs += 1;
+            }
+        }
+    }
+
+    for candidate in inline_rows {
+        let response_body = read_log_artifact(
+            paths,
+            candidate.response_body_path.clone(),
+            candidate.response_body.clone(),
+        )?;
+        let total_tokens = extract_total_tokens(&response_body).unwrap_or(candidate.current_total);
+        computed.push((candidate.id, candidate.current_total, total_tokens));
+    }
+
+    let rebuilt_logs = computed.len() as u64;
+    let updated_logs = computed
+        .iter()
+        .filter(|(_, current_total, next_total)| current_total != next_total)
+        .count() as u64;
+    let totals = computed
+        .iter()
+        .map(|(id, _, total_tokens)| (id.clone(), *total_tokens))
+        .collect::<HashMap<_, _>>();
+
+    db.execute_batch("BEGIN IMMEDIATE;")?;
+    let update_result = (|| -> Result<()> {
+        for (id, current_total, total_tokens) in &computed {
+            if current_total == total_tokens {
+                continue;
+            }
+            db.execute(
+                "UPDATE request_logs SET total_tokens = ? WHERE id = ?",
+                &[
+                    SqlValue::Integer(*total_tokens as i64),
+                    SqlValue::Text(id.clone()),
+                ],
+            )?;
+        }
+        if mark_version {
+            mark_total_tokens_version(db)?;
+        }
+        db.execute_batch("COMMIT;")?;
+        Ok(())
+    })();
+    if let Err(error) = update_result {
+        let _ = db.execute_batch("ROLLBACK;");
+        return Err(error);
+    }
+
+    Ok((
+        TokenRebuildReport {
+            total_logs: rebuilt_logs + skipped_logs,
+            rebuilt_logs,
+            updated_logs,
+            skipped_logs,
+        },
+        totals,
+    ))
+}
+
+fn total_tokens_version_is_current(db: &Connection) -> Result<bool> {
+    Ok(
+        get_setting_text(db, APP_SETTING_TOTAL_TOKENS_VERSION_KEY)?.as_deref()
+            == Some(CURRENT_TOTAL_TOKENS_VERSION),
+    )
 }
 
 fn read_log_record(paths: &AppPaths, log_file_path: &str, id: &str) -> Result<Option<RequestLog>> {
@@ -2377,7 +2498,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
   name TEXT NOT NULL,
+  base_url TEXT,
   default_model TEXT,
+  converter TEXT NOT NULL DEFAULT 'none',
   enabled INTEGER NOT NULL,
   note TEXT,
   created_at TEXT NOT NULL,
@@ -2444,8 +2567,8 @@ INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (3, CURRENT
 mod tests {
     use super::{AppPaths, Repository, daily_log_relative_path, prune_expired_logs};
     use crate::models::{
-        AccountInput, ApiProtocol, AppSettingsInput, DEFAULT_LOG_RETENTION_DAYS, DailyStatsQuery,
-        ProviderInput, RequestLogInput, RouteBindingInput,
+        AccountConverter, AccountInput, ApiProtocol, AppSettingsInput, DEFAULT_LOG_RETENTION_DAYS,
+        DailyStatsQuery, ProviderInput, RequestLogInput, RouteBindingInput,
     };
     use crate::sqlite::Connection;
     use chrono::{TimeZone, Utc};
@@ -2496,7 +2619,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
   name TEXT NOT NULL,
+  base_url TEXT,
   default_model TEXT,
+  converter TEXT NOT NULL DEFAULT 'none',
   enabled INTEGER NOT NULL,
   note TEXT,
   created_at TEXT NOT NULL,
@@ -2707,6 +2832,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "Primary".into(),
                 base_url: None,
                 default_model: None,
+                converter: AccountConverter::None,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -2720,6 +2846,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "GPT-5".into(),
                 base_url: None,
                 default_model: None,
+                converter: AccountConverter::None,
                 api_key: Some("sk-gpt5".into()),
                 note: None,
                 enabled: true,
@@ -2756,6 +2883,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "Primary".into(),
                 base_url: None,
                 default_model: None,
+                converter: AccountConverter::None,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -2769,6 +2897,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "Backup".into(),
                 base_url: None,
                 default_model: None,
+                converter: AccountConverter::None,
                 api_key: Some("sk-backup".into()),
                 note: None,
                 enabled: true,
@@ -2842,6 +2971,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "OpenRouter Primary".into(),
                 base_url: None,
                 default_model: None,
+                converter: AccountConverter::None,
                 api_key: Some("sk-openrouter".into()),
                 note: None,
                 enabled: true,
@@ -2886,6 +3016,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "Regional Override".into(),
                 base_url: Some("https://regional.example.com/v1/".into()),
                 default_model: None,
+                converter: AccountConverter::None,
                 api_key: Some("sk-regional".into()),
                 note: None,
                 enabled: true,
@@ -2919,6 +3050,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "Pinned Model".into(),
                 base_url: None,
                 default_model: Some("gpt-5.4".into()),
+                converter: AccountConverter::None,
                 api_key: Some("sk-pinned".into()),
                 note: None,
                 enabled: true,
@@ -2939,6 +3071,46 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     }
 
     #[tokio::test]
+    async fn account_converter_is_persisted_and_protocol_guarded() {
+        let repo = repo().await;
+        repo.unlock("password").await.unwrap();
+        let account = repo
+            .upsert_account(AccountInput {
+                id: None,
+                provider: "codex".into(),
+                name: "DeepSeek V4".into(),
+                base_url: Some("https://api.deepseek.com/v1".into()),
+                default_model: Some("deepseek-v4".into()),
+                converter: AccountConverter::DeepSeekV4ToOpenAi,
+                api_key: Some("sk-deepseek".into()),
+                note: None,
+                enabled: true,
+            })
+            .await
+            .unwrap();
+        assert_eq!(account.converter, AccountConverter::DeepSeekV4ToOpenAi);
+
+        let fetched = repo.get_account(&account.id).await.unwrap();
+        assert_eq!(fetched.converter, AccountConverter::DeepSeekV4ToOpenAi);
+
+        let rejected = repo
+            .upsert_account(AccountInput {
+                id: None,
+                provider: "claude-code".into(),
+                name: "Invalid DeepSeek".into(),
+                base_url: None,
+                default_model: None,
+                converter: AccountConverter::DeepSeekV4ToOpenAi,
+                api_key: Some("sk-invalid".into()),
+                note: None,
+                enabled: true,
+            })
+            .await
+            .unwrap_err();
+        assert!(rejected.to_string().contains("OpenAI protocol providers"));
+    }
+
+    #[tokio::test]
     async fn reveal_account_secret_requires_password_without_unlocking_vault() {
         let repo = repo().await;
         repo.unlock("password").await.unwrap();
@@ -2949,6 +3121,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 name: "Primary".into(),
                 base_url: None,
                 default_model: None,
+                converter: AccountConverter::None,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -3283,6 +3456,58 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
         assert_eq!(report.updated_logs, 1);
         assert_eq!(report.skipped_logs, 0);
 
+        let rebuilt = repo.get_log(&stored.id).await.unwrap();
+        assert_eq!(rebuilt.total_tokens, 193_555);
+    }
+
+    #[tokio::test]
+    async fn query_logs_repairs_stale_today_token_totals() {
+        let repo = repo().await;
+        let stored = repo
+            .insert_log(RequestLogInput {
+                provider: "codex".into(),
+                model: Some("gpt-5.4".into()),
+                account_id: Some("acct_primary".into()),
+                method: "POST".into(),
+                path: "/codex/responses".into(),
+                status_code: Some(200),
+                duration_ms: 25,
+                error_text: None,
+                request_headers: "{}".into(),
+                request_body: r#"{"model":"gpt-5.4"}"#.into(),
+                response_headers: "{}".into(),
+                response_body: r#"{"usage":{"input_tokens":192662,"input_tokens_details":{"cached_tokens":192512},"output_tokens":893,"total_tokens":193555}}"#.into(),
+                streamed: false,
+            })
+            .await
+            .unwrap();
+
+        {
+            let db = repo.db.lock().await;
+            db.execute(
+                "UPDATE request_logs SET total_tokens = ? WHERE id = ?",
+                &[
+                    crate::sqlite::SqlValue::Integer(1_043),
+                    crate::sqlite::SqlValue::Text(stored.id.clone()),
+                ],
+            )
+            .unwrap();
+        }
+
+        let logs = repo
+            .query_logs(crate::models::LogQuery {
+                provider: Some("codex".into()),
+                account_id: None,
+                session_id: None,
+                status_code: None,
+                created_from: None,
+                created_to: None,
+                limit: Some(10),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(logs[0].total_tokens, 193_555);
         let rebuilt = repo.get_log(&stored.id).await.unwrap();
         assert_eq!(rebuilt.total_tokens, 193_555);
     }

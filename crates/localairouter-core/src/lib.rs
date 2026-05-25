@@ -7,7 +7,7 @@ pub mod store;
 
 pub use error::{LocalAIRouterError, Result};
 pub use models::{
-    Account, AccountInput, ApiProtocol, AppSettings, AppSettingsInput,
+    Account, AccountConverter, AccountInput, ApiProtocol, AppSettings, AppSettingsInput,
     DEFAULT_MONITOR_BUFFER_LIMIT, DailyStatsPoint, DailyStatsQuery, DeleteResponse, EnvVarExample,
     HealthResponse, LogQuery, OnboardingGuide, ProviderDefinition, ProviderInput, RequestLog,
     RequestLogInput, ResolvedAccount, RevealSecretRequest, RevealedSecret, RouteBinding,

@@ -17,8 +17,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use localairouter_core::{
-    AccountInput, AppPaths, AppSettings, AppSettingsInput, Repository, RouteBindingInput,
-    load_app_settings, save_app_settings,
+    AccountConverter, AccountInput, AppPaths, AppSettings, AppSettingsInput, Repository,
+    RouteBindingInput, load_app_settings, save_app_settings,
 };
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
@@ -804,6 +804,7 @@ fn import_codex_account_contents(current: &str, auth_json: Option<&str>) -> Resu
         name,
         base_url,
         default_model: None,
+        converter: AccountConverter::None,
         api_key: Some(api_key),
         note: None,
         enabled: true,
@@ -843,6 +844,7 @@ fn import_claude_account_contents(current: &str) -> Result<AccountInput> {
         name: "Claude Code".into(),
         base_url,
         default_model: None,
+        converter: AccountConverter::None,
         api_key: Some(api_key),
         note: None,
         enabled: true,
@@ -1396,9 +1398,7 @@ fn apply_tray_menu(app: &AppHandle, locale: &str, providers: Vec<TrayProviderSta
         .show_menu_on_left_click(true);
     #[cfg(target_os = "macos")]
     {
-        builder = builder
-            .icon(load_macos_tray_icon()?)
-            .icon_as_template(true);
+        builder = builder.icon(load_macos_tray_icon()?).icon_as_template(true);
     }
     #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon().cloned() {

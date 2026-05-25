@@ -973,6 +973,29 @@
           </label>
 
           <label class="field">
+            <span data-i18n="Protocol Converter">Protocol Converter</span>
+            <select id="account-converter">
+              <option value="none" data-i18n="No conversion">
+                No conversion
+              </option>
+              <option
+                value="deepseek-v4-to-openai"
+                data-i18n="DeepSeek V4 -> OpenAI"
+              >
+                DeepSeek V4 -> OpenAI
+              </option>
+            </select>
+            <small
+              class="field-hint"
+              id="account-converter-hint"
+              data-i18n="Use only when this account's upstream API shape differs from the provider protocol."
+            >
+              Use only when this account's upstream API shape differs from the
+              provider protocol.
+            </small>
+          </label>
+
+          <label class="field">
             <span data-i18n="Note">Note</span>
             <textarea
               id="account-note"

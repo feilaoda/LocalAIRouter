@@ -18,8 +18,9 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use localairouter_core::models::{
-    AccountInput, ApiProtocol, DailyStatsQuery, LogQuery, ProviderDefinition, ProviderInput,
-    RequestLogInput, RevealSecretRequest, RouteBindingInput, UnlockRequest,
+    AccountConverter, AccountInput, ApiProtocol, DailyStatsQuery, LogQuery, ProviderDefinition,
+    ProviderInput, RequestLogInput, ResolvedAccount, RevealSecretRequest, RouteBindingInput,
+    UnlockRequest,
 };
 use localairouter_core::{LocalAIRouterError, Repository, Result, extract_model};
 use reqwest::Client;
@@ -32,6 +33,7 @@ use url::form_urlencoded;
 use uuid::Uuid;
 
 mod config;
+mod converter;
 
 pub use config::{
     DAEMON_ALLOW_LAN_ENV, DAEMON_BINARY_NAME, DAEMON_PARENT_PID_ENV, DAEMON_PORT_ENV,
@@ -48,6 +50,7 @@ struct AppState {
     repository: Arc<Repository>,
     client: Client,
     monitor: Arc<MonitorFeed>,
+    response_store: Arc<converter::ResponseStore>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,6 +68,8 @@ struct MonitorEntry {
     status_code: Option<u16>,
     duration_ms: Option<u64>,
     error_text: Option<String>,
+    upstream_url: Option<String>,
+    converter: Option<String>,
     request_preview: String,
     response_preview: String,
     phase: String,
@@ -108,6 +113,8 @@ impl MonitorFeed {
             status_code: None,
             duration_ms: None,
             error_text: None,
+            upstream_url: None,
+            converter: None,
             request_preview: preview_text(request_body),
             response_preview: String::new(),
             phase: "routing".into(),
@@ -119,10 +126,20 @@ impl MonitorFeed {
         id
     }
 
-    fn mark_routed(&self, id: &str, account_id: &str, model: Option<String>, request_body: &str) {
+    fn mark_routed(
+        &self,
+        id: &str,
+        account_id: &str,
+        model: Option<String>,
+        request_body: &str,
+        upstream_url: &str,
+        converter: Option<&str>,
+    ) {
         self.update_entry(id, |entry| {
             entry.account_id = Some(account_id.into());
             entry.model = model;
+            entry.upstream_url = Some(upstream_url.into());
+            entry.converter = converter.map(str::to_owned);
             entry.request_preview = preview_text(request_body);
             entry.phase = "upstream".into();
         });
@@ -271,10 +288,12 @@ pub async fn run_with_config(config: DaemonConfig) -> Result<()> {
     })?);
     let client = Client::builder().no_gzip().build().map_err(map_http)?;
     let monitor = Arc::new(MonitorFeed::new(config.monitor_buffer_limit));
+    let response_store = Arc::new(converter::ResponseStore::new());
     let state = AppState {
         repository,
         client,
         monitor,
+        response_store,
     };
     let addr = listener.local_addr()?;
     info!("localairouter daemon listening on http://{addr}");
@@ -326,6 +345,7 @@ async fn handle_request(
         }
         (Method::POST, "/admin/lock") => {
             state.repository.lock().await;
+            state.response_store.clear();
             Ok(json_response(
                 StatusCode::OK,
                 &localairouter_core::models::UnlockResponse {
@@ -514,23 +534,49 @@ async fn proxy_request(
         .default_model
         .as_deref()
         .or(resolved.provider.default_model.as_deref());
-    let (request_body, request_body_text, model) =
+    let (request_body, client_request_body_text, model) =
         apply_account_default_model(request_body, default_model);
-    state.monitor.mark_routed(
-        &monitor_id,
-        &resolved.account.id,
-        model.clone(),
-        &request_body_text,
-    );
+    let conversion = prepare_account_conversion(
+        &resolved,
+        &state.response_store,
+        upstream_path,
+        request_body,
+    )?;
+    let PreparedRequest {
+        client_upstream_path,
+        upstream_path,
+        query: converted_query,
+        body: request_body,
+        logged_body_text: request_body_text,
+        model: converted_model,
+        converter_label,
+    } = conversion;
+    let query = converted_query.unwrap_or(query);
+    let model = converted_model.or(model);
     let upstream_url = format!(
         "{}{}{}",
         resolved.upstream_base_url.trim_end_matches('/'),
         if upstream_path.is_empty() {
             "/"
         } else {
-            upstream_path
+            upstream_path.as_str()
         },
         query
+    );
+    state.monitor.mark_routed(
+        &monitor_id,
+        &resolved.account.id,
+        model.clone(),
+        &request_body_text,
+        &upstream_url,
+        converter_label.as_deref(),
+    );
+    let request_body_text = prepend_log_diagnostics(
+        &request_body_text,
+        &client_upstream_path,
+        &upstream_path,
+        &upstream_url,
+        converter_label.as_deref(),
     );
 
     let mut builder = state
@@ -606,6 +652,11 @@ async fn proxy_request(
         state
             .monitor
             .mark_response(&monitor_id, status.as_u16(), true);
+        if converter_label.is_some() && converter::is_openai_responses_path(&client_upstream_path) {
+            return Err(LocalAIRouterError::Validation(
+                "deepseek v4 converter currently buffers upstream streaming responses; the upstream request was sent as non-streaming".into(),
+            ));
+        }
         stream_response(
             state,
             monitor_id,
@@ -642,7 +693,17 @@ async fn proxy_request(
                 return Err(error);
             }
         };
-        let response_body = String::from_utf8_lossy(&body).into_owned();
+        let converted_response = convert_account_response(
+            &state.response_store,
+            &client_upstream_path,
+            converter_label.as_deref(),
+            status,
+            &client_request_body_text,
+            body,
+            &original_request_headers,
+        )?;
+        let body = converted_response.body;
+        let response_body = converted_response.logged_body_text;
         let duration_ms = start.elapsed().as_millis() as u64;
         state.monitor.complete(
             &monitor_id,
@@ -650,7 +711,7 @@ async fn proxy_request(
             duration_ms,
             None,
             Some(response_body.clone()),
-            false,
+            converted_response.streamed,
         );
         let inserted_log = state
             .repository
@@ -667,7 +728,7 @@ async fn proxy_request(
                 request_body: request_body_text,
                 response_headers,
                 response_body: response_body.clone(),
-                streamed: false,
+                streamed: converted_response.streamed,
             })
             .await;
         if let Ok(log) = inserted_log {
@@ -676,10 +737,220 @@ async fn proxy_request(
 
         let mut response = Response::builder()
             .status(status)
-            .body(full_body(body))
+            .body(full_body(body.clone()))
             .map_err(|error| LocalAIRouterError::Http(error.to_string()))?;
         copy_headers(&upstream_headers, response.headers_mut());
+        if let Some(content_type) = converted_response.content_type {
+            response
+                .headers_mut()
+                .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+        }
         Ok(cors_response(response))
+    }
+}
+
+struct PreparedRequest {
+    client_upstream_path: String,
+    upstream_path: String,
+    query: Option<String>,
+    body: Bytes,
+    logged_body_text: String,
+    model: Option<String>,
+    converter_label: Option<String>,
+}
+
+struct PreparedResponse {
+    body: Bytes,
+    logged_body_text: String,
+    content_type: Option<&'static str>,
+    streamed: bool,
+}
+
+fn prepare_account_conversion(
+    resolved: &ResolvedAccount,
+    response_store: &converter::ResponseStore,
+    upstream_path: &str,
+    request_body: Bytes,
+) -> Result<PreparedRequest> {
+    match resolved.account.converter {
+        AccountConverter::None => {
+            if should_auto_apply_deepseek_converter(resolved, upstream_path, &request_body) {
+                return prepare_deepseek_conversion(
+                    response_store,
+                    upstream_path,
+                    request_body,
+                    "deepseek-v4-to-openai(auto)",
+                );
+            }
+            let logged_body_text = String::from_utf8_lossy(&request_body).into_owned();
+            Ok(PreparedRequest {
+                client_upstream_path: upstream_path.to_owned(),
+                upstream_path: upstream_path.to_owned(),
+                query: None,
+                model: extract_model(&request_body),
+                body: request_body,
+                logged_body_text,
+                converter_label: None,
+            })
+        }
+        AccountConverter::DeepSeekV4ToOpenAi => {
+            if resolved.provider.protocol != ApiProtocol::OpenAi {
+                return Err(LocalAIRouterError::Validation(
+                    "deepseek v4 converter can only be used with OpenAI protocol providers".into(),
+                ));
+            }
+            prepare_deepseek_conversion(
+                response_store,
+                upstream_path,
+                request_body,
+                AccountConverter::DeepSeekV4ToOpenAi.as_str(),
+            )
+        }
+    }
+}
+
+fn prepare_deepseek_conversion(
+    response_store: &converter::ResponseStore,
+    upstream_path: &str,
+    request_body: Bytes,
+    converter_label: &str,
+) -> Result<PreparedRequest> {
+    let converted = converter::convert_deepseek_v4_request(
+        response_store,
+        upstream_path,
+        request_body.clone(),
+    )?;
+    match converted {
+        Some(converted) => Ok(PreparedRequest {
+            client_upstream_path: upstream_path.to_owned(),
+            upstream_path: converted.upstream_path,
+            query: converted.query,
+            body: converted.body,
+            logged_body_text: converted.logged_body_text,
+            model: converted.model,
+            converter_label: Some(converter_label.into()),
+        }),
+        None => {
+            let logged_body_text = String::from_utf8_lossy(&request_body).into_owned();
+            Ok(PreparedRequest {
+                client_upstream_path: upstream_path.to_owned(),
+                upstream_path: upstream_path.to_owned(),
+                query: None,
+                model: extract_model(&request_body),
+                body: request_body,
+                logged_body_text,
+                converter_label: None,
+            })
+        }
+    }
+}
+
+fn should_auto_apply_deepseek_converter(
+    resolved: &ResolvedAccount,
+    upstream_path: &str,
+    request_body: &[u8],
+) -> bool {
+    if resolved.provider.protocol != ApiProtocol::OpenAi
+        || !converter::is_openai_responses_path(upstream_path)
+    {
+        return false;
+    }
+    let model = extract_model(request_body)
+        .or_else(|| resolved.account.default_model.clone())
+        .or_else(|| resolved.provider.default_model.clone())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let base_url = resolved.upstream_base_url.to_ascii_lowercase();
+    model.starts_with("deepseek") || base_url.contains("deepseek")
+}
+
+fn prepend_log_diagnostics(
+    body: &str,
+    client_upstream_path: &str,
+    upstream_path: &str,
+    upstream_url: &str,
+    converter_label: Option<&str>,
+) -> String {
+    let diagnostics = serde_json::json!({
+        "client_upstream_path": client_upstream_path,
+        "upstream_path": upstream_path,
+        "upstream_url": upstream_url,
+        "converter": converter_label,
+    });
+    let Ok(diagnostics) = serde_json::to_string(&diagnostics) else {
+        return body.to_owned();
+    };
+    match serde_json::from_str::<JsonValue>(body) {
+        Ok(mut value) => {
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "_localairouter".into(),
+                    serde_json::from_str(&diagnostics).unwrap_or(JsonValue::Null),
+                );
+                serde_json::to_string_pretty(&value).unwrap_or_else(|_| body.to_owned())
+            } else {
+                body.to_owned()
+            }
+        }
+        Err(_) if body.trim().is_empty() => {
+            format!(r#"{{"_localairouter":{diagnostics}}}"#)
+        }
+        Err(_) => body.to_owned(),
+    }
+}
+
+fn convert_account_response(
+    response_store: &converter::ResponseStore,
+    upstream_path: &str,
+    converter_label: Option<&str>,
+    status: StatusCode,
+    request_body_text: &str,
+    response_body: Bytes,
+    original_request_headers: &HeaderMap<HeaderValue>,
+) -> Result<PreparedResponse> {
+    if converter_label.is_some() {
+        let converted = converter::convert_deepseek_v4_response(
+            upstream_path,
+            status,
+            request_body_text,
+            response_body,
+        )?;
+        if status.is_success() && converter::is_openai_responses_path(upstream_path) {
+            let _ = response_store.store_response(request_body_text, &converted.body);
+        }
+        if status.is_success()
+            && converter::is_openai_responses_path(upstream_path)
+            && client_wants_responses_stream(original_request_headers, request_body_text)
+        {
+            let body = converter::response_json_to_sse(&converted.body)?;
+            let logged_body_text = String::from_utf8_lossy(&body).into_owned();
+            Ok(PreparedResponse {
+                body,
+                logged_body_text,
+                content_type: Some("text/event-stream"),
+                streamed: true,
+            })
+        } else {
+            let content_type = if converter::is_openai_responses_path(upstream_path) {
+                Some("application/json")
+            } else {
+                None
+            };
+            Ok(PreparedResponse {
+                body: converted.body,
+                logged_body_text: converted.logged_body_text,
+                content_type,
+                streamed: false,
+            })
+        }
+    } else {
+        let logged_body_text = String::from_utf8_lossy(&response_body).into_owned();
+        Ok(PreparedResponse {
+            body: response_body,
+            logged_body_text,
+            content_type: None,
+            streamed: false,
+        })
     }
 }
 
@@ -998,6 +1269,21 @@ fn copy_headers(source: &reqwest::header::HeaderMap, target: &mut HeaderMap<Head
     }
 }
 
+fn client_wants_responses_stream(
+    headers: &HeaderMap<HeaderValue>,
+    request_body_text: &str,
+) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.contains("text/event-stream"))
+        .unwrap_or(false)
+        || serde_json::from_str::<JsonValue>(request_body_text)
+            .ok()
+            .and_then(|value| value.get("stream").and_then(JsonValue::as_bool))
+            .unwrap_or(false)
+}
+
 fn is_sensitive_header(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
@@ -1094,8 +1380,11 @@ fn parent_process_alive(_parent_pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_account_default_model;
+    use super::{apply_account_default_model, prepare_account_conversion};
     use bytes::Bytes;
+    use localairouter_core::models::{
+        Account, AccountConverter, ApiProtocol, ProviderDefinition, ResolvedAccount,
+    };
 
     #[test]
     fn account_default_model_overrides_existing_request_model() {
@@ -1128,5 +1417,81 @@ mod tests {
         let (body, _, model) = apply_account_default_model(original.clone(), None);
         assert_eq!(model.as_deref(), Some("gpt-4.1"));
         assert_eq!(body, original);
+    }
+
+    #[test]
+    fn deepseek_responses_request_auto_uses_converter() {
+        let resolved = resolved_account(AccountConverter::None);
+        let store = crate::converter::ResponseStore::new();
+        let prepared = prepare_account_conversion(
+            &resolved,
+            &store,
+            "/responses",
+            Bytes::from_static(br#"{"model":"deepseek-v4-pro","input":"hello"}"#),
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&prepared.body).unwrap();
+
+        assert_eq!(prepared.client_upstream_path, "/responses");
+        assert_eq!(prepared.upstream_path, "/chat/completions");
+        assert_eq!(
+            prepared.converter_label.as_deref(),
+            Some("deepseek-v4-to-openai(auto)")
+        );
+        assert_eq!(body["model"].as_str(), Some("deepseek-v4-pro"));
+        assert!(body["messages"].is_array());
+    }
+
+    #[test]
+    fn configured_deepseek_converter_uses_chat_completions_path() {
+        let resolved = resolved_account(AccountConverter::DeepSeekV4ToOpenAi);
+        let store = crate::converter::ResponseStore::new();
+        let prepared = prepare_account_conversion(
+            &resolved,
+            &store,
+            "/responses",
+            Bytes::from_static(br#"{"model":"other-model","input":"hello"}"#),
+        )
+        .unwrap();
+
+        assert_eq!(prepared.upstream_path, "/chat/completions");
+        assert_eq!(
+            prepared.converter_label.as_deref(),
+            Some("deepseek-v4-to-openai")
+        );
+    }
+
+    fn resolved_account(converter: AccountConverter) -> ResolvedAccount {
+        ResolvedAccount {
+            provider: ProviderDefinition {
+                slug: "codex".into(),
+                display_name: "Codex".into(),
+                protocol: ApiProtocol::OpenAi,
+                base_url: "https://api.openai.com".into(),
+                default_model: None,
+                proxy_path: "codex".into(),
+                auth_header: "Authorization".into(),
+                auth_prefix: Some("Bearer".into()),
+                enabled: true,
+                is_builtin: true,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+            },
+            account: Account {
+                id: "acct_deepseek".into(),
+                provider: "codex".into(),
+                name: "DeepSeek".into(),
+                base_url: Some("https://api.deepseek.com/v1".into()),
+                default_model: None,
+                converter,
+                enabled: true,
+                note: None,
+                has_secret: true,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+            },
+            upstream_base_url: "https://api.deepseek.com/v1".into(),
+            api_key: "sk-test".into(),
+        }
     }
 }

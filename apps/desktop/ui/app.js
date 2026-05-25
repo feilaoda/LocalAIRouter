@@ -170,6 +170,16 @@ const ZH_MESSAGES = {
   "Default Model": "默认模型",
   "Optional. Overrides client request model for this account":
     "可选。配置后此账号会覆盖客户端请求里的模型。",
+  "Protocol Converter": "协议转换",
+  "No conversion": "不转换",
+  "DeepSeek V4 -> OpenAI": "DeepSeek V4 -> OpenAI",
+  "Use only when this account's upstream API shape differs from the provider protocol.":
+    "仅在这个账号的上游 API 形态和 Provider 协议不一致时使用。",
+  "DeepSeek V4 converter is available for OpenAI protocol providers. Codex Responses requests are sent upstream as Chat Completions and converted back.":
+    "DeepSeek V4 转换仅适用于 OpenAI 协议 Provider。Codex Responses 请求会上游转成 Chat Completions，再转换回来。",
+  "This converter is only available for OpenAI protocol providers.":
+    "这个转换器只适用于 OpenAI 协议 Provider。",
+  "converter {name}": "转换 {name}",
   "Optional. Overrides client request model for this provider":
     "可选。配置后此 Provider 会覆盖客户端请求里的模型。",
   "default model {model}": "默认模型 {model}",
@@ -639,6 +649,8 @@ const elements = {
   ),
   accountBaseUrl: document.querySelector("#account-base-url"),
   accountDefaultModel: document.querySelector("#account-default-model"),
+  accountConverter: document.querySelector("#account-converter"),
+  accountConverterHint: document.querySelector("#account-converter-hint"),
   accountNote: document.querySelector("#account-note"),
   accountEnabled: document.querySelector("#account-enabled"),
   accountsProviderTabs: document.querySelector("#accounts-provider-tabs"),
@@ -1354,6 +1366,9 @@ function bindEvents() {
       resetAccountForm();
       openDialog(elements.accountDialog, elements.accountName);
     });
+  });
+  elements.accountProvider.addEventListener("change", () => {
+    syncAccountConverterOptions();
   });
 
   elements.accountForm.addEventListener("submit", async (event) => {
@@ -2201,6 +2216,9 @@ function renderAccounts() {
     if (account.defaultModel) {
       detailParts.push(t("default model {model}", { model: account.defaultModel }));
     }
+    if (account.converter && account.converter !== "none") {
+      detailParts.push(t("converter {name}", { name: converterDisplayLabel(account.converter) }));
+    }
     if (account.note) {
       detailParts.push(account.note);
     }
@@ -2219,6 +2237,7 @@ function renderAccounts() {
         <span class="pill">${escapeHtml(provider ? provider.displayName : account.provider)}</span>
         <span class="pill ${account.hasSecret ? "ok" : "warn"}">${account.hasSecret ? t("secret stored") : t("missing secret")}</span>
         <span class="pill ${account.baseUrl ? "warm" : ""}">${escapeHtml(account.baseUrl ? t("account base url") : t("provider base url"))}</span>
+        ${account.converter && account.converter !== "none" ? `<span class="pill warm">${escapeHtml(converterDisplayLabel(account.converter))}</span>` : ""}
         ${isDefaultAccount ? `<span class="pill ok">${escapeHtml(t("default"))}</span>` : ""}
         <span class="pill">${escapeHtml(routeCountLabel(routeCount))}</span>
         <span class="pill">${escapeHtml(t("updated {time}", { time: formatRelativeTime(account.updatedAt) }))}</span>
@@ -2514,6 +2533,8 @@ function renderMonitor() {
       <div class="data-meta">
         <span class="pill">${escapeHtml(providerName)}</span>
         <span class="pill">${escapeHtml(accountName)}</span>
+        ${entry.converter ? `<span class="pill warm">${escapeHtml(entry.converter)}</span>` : ""}
+        ${entry.upstreamUrl ? `<span class="pill" title="${escapeHtml(entry.upstreamUrl)}">${escapeHtml(truncateMiddle(entry.upstreamUrl, 42))}</span>` : ""}
         <span class="pill">${escapeHtml(entry.streamed ? t("streamed") : t("sync"))}</span>
         <span class="pill">${escapeHtml(monitorDurationLabel(entry))}</span>
         <span class="pill">${escapeHtml(formatRelativeTime(entry.updatedAt || entry.startedAt))}</span>
@@ -2888,6 +2909,7 @@ function syncProviderOptions() {
   }
 
   elements.accountSubmit.disabled = !accountProviders.length;
+  syncAccountConverterOptions();
   syncRouteAccountOptions();
 }
 
@@ -3217,6 +3239,7 @@ function resetAccountForm() {
   elements.accountApiKey.value = "";
   elements.accountBaseUrl.value = "";
   elements.accountDefaultModel.value = "";
+  elements.accountConverter.value = "none";
   elements.accountNote.value = "";
   elements.accountEnabled.checked = true;
   const preferredProvider =
@@ -3229,6 +3252,7 @@ function resetAccountForm() {
   } else {
     elements.accountProvider.value = "";
   }
+  syncAccountConverterOptions();
   renderAccountSecretControls();
 }
 
@@ -3264,6 +3288,32 @@ function renderAccountSecretControls() {
   elements.accountSecretCopyButton.disabled = !state.revealedSecret;
 }
 
+function syncAccountConverterOptions() {
+  const provider = getProvider(elements.accountProvider.value);
+  const selected = elements.accountConverter.value || "none";
+  const openAiCompatible = provider?.protocol === "openai";
+  const options = [
+    optionNode("none", t("No conversion")),
+    optionNode("deepseek-v4-to-openai", t("DeepSeek V4 -> OpenAI")),
+  ];
+  elements.accountConverter.replaceChildren(...options);
+  elements.accountConverter.value =
+    selected === "deepseek-v4-to-openai" && openAiCompatible
+      ? selected
+      : "none";
+  elements.accountConverter.disabled = !provider;
+  for (const option of elements.accountConverter.options) {
+    if (option.value === "deepseek-v4-to-openai") {
+      option.disabled = !openAiCompatible;
+    }
+  }
+  elements.accountConverterHint.textContent = openAiCompatible
+    ? t(
+        "DeepSeek V4 converter is available for OpenAI protocol providers. Codex Responses requests are sent upstream as Chat Completions and converted back.",
+      )
+    : t("This converter is only available for OpenAI protocol providers.");
+}
+
 function fillAccountForm(account) {
   state.accountEditor = {
     id: account.id,
@@ -3287,8 +3337,10 @@ function fillAccountForm(account) {
   elements.accountApiKey.value = "";
   elements.accountBaseUrl.value = account.baseUrl || "";
   elements.accountDefaultModel.value = account.defaultModel || "";
+  elements.accountConverter.value = account.converter || "none";
   elements.accountNote.value = account.note || "";
   elements.accountEnabled.checked = account.enabled;
+  syncAccountConverterOptions();
   renderAccountSecretControls();
 }
 
@@ -3298,6 +3350,7 @@ function buildAccountPayload() {
   const apiKey = normalizeOptional(elements.accountApiKey.value);
   const baseUrl = normalizeOptional(elements.accountBaseUrl.value);
   const defaultModel = normalizeOptional(elements.accountDefaultModel.value);
+  const converter = elements.accountConverter.value || "none";
   const note = normalizeOptional(elements.accountNote.value);
   const isEditing = Boolean(state.accountEditor);
 
@@ -3337,6 +3390,7 @@ function buildAccountPayload() {
     name,
     baseUrl,
     defaultModel,
+    converter,
     apiKey,
     note,
     enabled: elements.accountEnabled.checked,
@@ -3774,6 +3828,20 @@ function protocolDisplayLabel(protocol) {
   }
 }
 
+function converterDisplayLabel(converter) {
+  switch (converter) {
+    case "deepseek-v4-to-openai":
+      return t("DeepSeek V4 -> OpenAI");
+    case "none":
+    case "":
+    case null:
+    case undefined:
+      return t("No conversion");
+    default:
+      return converter;
+  }
+}
+
 function routeCountLabel(count) {
   return count === 1
     ? t("{count} route", { count })
@@ -3910,6 +3978,8 @@ function buildFullLogClipboardText(log, fallbackProviderName, fallbackAccountNam
     ["providerSlug", log.provider],
     ["account", accountName],
     ["accountId", log.accountId],
+    ["upstreamUrl", log.upstreamUrl],
+    ["converter", log.converter],
     ["model", log.model || t("model unavailable")],
     ["method", log.method],
     ["path", log.path],
