@@ -1,21 +1,26 @@
 # LocalAIRouter
 
-LocalAIRouter 是一个本地 AI 代理路由器，用来把 Codex、Claude Code、Gemini 或自定义客户端的请求转发到你配置的上游账号。
+LocalAIRouter 是一个本地 AI 代理桌面应用。在 Codex、Claude Code 等 AI 工具和你的多个 API 账号之间插一层——切换账号不用改配置，不用改环境变量，点一下就行。
 
-默认监听地址：
+**它不是什么：** 不是透明代理，不劫持系统流量；不是聊天客户端；不会上传你的 API Key。
 
-- 本机访问：`http://127.0.0.1:16321`
-- Codex 入口：`http://127.0.0.1:16321/codex`
-- Claude Code 入口：`http://127.0.0.1:16321/claude-code`
+**它做什么：** 你的 AI 工具都指向 `http://127.0.0.1:16321`，在 LocalAIRouter 桌面端里选择当前用哪个 Provider 和哪个账号，所有流经的请求都有日志、有统计、能看到 Token 花了多少。
 
-主要能力：
 
-- 内置 `codex`、`claude-code`、`gemini` Provider，也支持自定义 Provider
-- 支持按 Provider、模型前缀、默认账号路由请求
-- 支持 Provider / Account 默认模型
-- 本地加密保存账号密钥
-- 桌面端管理 Provider、Account、Route、运行设置和完整请求日志
-- 可选开启局域网访问，让其他设备通过本机 IP 访问代理
+## 核心特性
+
+- **一键切账号**：每个 Provider 下配多个 Account，设默认立刻生效，tray 菜单同步更新。
+- **Codex / Claude 配置同步**：点 Sync 就写进配置，不覆盖其他设置，原 `base_url` 自动备份。
+- **支持Codex + Deepseek V4**：不仅可以Claude Code + Deepseek，也支持Codex + Deepseek。
+
+## 默认本地入口
+
+| 客户端 | 本地代理地址 |
+|--------|-------------|
+| Codex | `http://127.0.0.1:16321/codex` |
+| Claude Code | `http://127.0.0.1:16321/claude-code` |
+| Gemini | `http://127.0.0.1:16321/gemini` |
+| 自定义 Provider | `http://127.0.0.1:16321/{proxy-path}` |
 
 ## 快速开始
 
@@ -34,39 +39,21 @@ cargo install tauri-cli --locked
 
 ### 2. 编译桌面 App
 
-推荐新人直接编译 `.app`，这样在 macOS 上运行时不会弹出 Terminal 窗口。
-
 ```bash
 cd apps/desktop/src-tauri
 cargo tauri build
 ```
 
-编译成功后，产物在仓库根目录：
+产出：`target/release/bundle/macos/LocalAIRouter.app`
 
-```text
-target/release/bundle/macos/LocalAIRouter.app
-```
-
-如果需要生成 macOS DMG 安装包，可以显式指定 bundle 类型：
+DMG 构建：
 
 ```bash
 cd apps/desktop/src-tauri
 cargo tauri build --bundles dmg
 ```
 
-DMG 输出在仓库根目录：
-
-```text
-target/release/bundle/dmg/
-```
-
-### 3. 运行 App
-
-```bash
-open ../../../target/release/bundle/macos/LocalAIRouter.app
-```
-
-如果你已经回到仓库根目录，则运行：
+### 3. 运行
 
 ```bash
 open target/release/bundle/macos/LocalAIRouter.app
@@ -74,164 +61,10 @@ open target/release/bundle/macos/LocalAIRouter.app
 
 ### 4. 首次使用
 
-打开桌面端后：
-
-1. 初始化或解锁 Vault
-2. 在 `Providers` 里确认或新增上游 Provider
-3. 在 `Accounts` 里添加账号和 API Key
-4. 在 `Routes` 里选择默认账号
-5. 在 `Onboarding` 页面复制客户端配置
-
-本机客户端通常使用这些地址：
-
-- Codex：`http://127.0.0.1:16321/codex`
-- Claude Code：`http://127.0.0.1:16321/claude-code`
-
-## 编译方式
-
-### 编译完整 workspace
-
-如果只想得到 release 二进制：
-
-```bash
-cargo build --workspace --release
-```
-
-输出包括：
-
-- `target/release/localairouter`
-- `target/release/localairouter-daemon`
-
-注意：`target/release/localairouter` 是裸二进制，不是 macOS `.app`。从 Finder 或 `open` 运行它时，macOS 可能会打开 Terminal。想要正常桌面应用体验，请使用 `cargo tauri build` 生成的 `.app`。
-
-### 构建 macOS DMG
-
-默认配置只构建 `.app`，避免日常开发时被 DMG 打包耗时或环境问题影响。发布时可以单独构建 DMG：
-
-```bash
-cd apps/desktop/src-tauri
-cargo tauri build --bundles dmg
-```
-
-如果你的本机没有签名证书，或只是本地分发测试，可以跳过签名：
-
-```bash
-cargo tauri build --bundles dmg --no-sign
-```
-
-DMG 产物位置：
-
-```text
-target/release/bundle/dmg/
-```
-
-如果想让 `cargo tauri build` 默认同时构建 `.app` 和 `.dmg`，可以把 `apps/desktop/src-tauri/tauri.conf.json` 里的 `bundle.targets` 改成：
-
-```json
-["app", "dmg"]
-```
-
-### 编译调试版本
-
-```bash
-cargo build --workspace
-```
-
-输出包括：
-
-- `target/debug/localairouter`
-- `target/debug/localairouter-daemon`
-
-## 开发者运行
-
-### 普通开发运行
-
-在仓库根目录运行：
-
-```bash
-cargo run -p localairouter
-```
-
-桌面端启动时会自动拉起 `localairouter-daemon`。
-
-### UI 开发模式
-
-如果只改 `apps/desktop/ui` 下的 HTML / CSS / JS，可以开启轻量 UI dev server：
-
-```bash
-LOCALAIROUTER_UI_DEV=1 cargo run -p localairouter
-```
-
-这个模式下：
-
-- 桌面窗口直接加载 `apps/desktop/ui`
-- HTML / CSS / JS 修改后会自动刷新
-- Rust 代码修改仍需要重新运行
-
-### 单独运行 daemon
-
-```bash
-cargo run -p localairouter-daemon
-```
-
-默认监听：
-
-```text
-http://127.0.0.1:16321
-```
-
-也可以指定端口：
-
-```bash
-LOCALAIROUTER_PORT=18000 cargo run -p localairouter-daemon
-```
-
-桌面端同样会把该端口传给它拉起的 daemon：
-
-```bash
-LOCALAIROUTER_PORT=18000 cargo run -p localairouter
-```
-
-## 常用运行设置
-
-### 修改默认数据目录
-
-```bash
-LOCALAIROUTER_DATA_DIR=/path/to/data cargo run -p localairouter
-```
-
-不设置时会使用系统默认本地数据目录。
-
-### 指定 daemon 路径
-
-桌面端默认会从 workspace 的 `target` 目录查找 `localairouter-daemon`。如果你想指定 daemon：
-
-```bash
-export LOCALAIROUTER_DAEMON_PATH=/absolute/path/to/localairouter-daemon
-cargo run -p localairouter
-```
-
-### 允许局域网访问
-
-在桌面端 `Settings` 页面勾选 `Allow LAN Access`。
-
-开启后 daemon 会绑定到：
-
-```text
-0.0.0.0:<port>
-```
-
-设置页会显示当前机器的局域网访问地址。其他设备应使用本机局域网 IP，例如：
-
-```text
-http://192.168.1.10:16321/claude-code
-```
-
-也可以通过环境变量开启：
-
-```bash
-LOCALAIROUTER_ALLOW_LAN=1 cargo run -p localairouter
-```
+1. 在 `Providers` 里确认内置 Provider，或新增自定义 Provider。
+2. 在 `Accounts` 里添加账号和 API Key。
+3. 在 `Accounts` 里把某个账号设为默认。
+4. 在 `文档` 页面查看接入说明，或在 `Providers` 里点 Sync 同步到 Codex / Claude Code。
 
 ## 测试和检查
 
