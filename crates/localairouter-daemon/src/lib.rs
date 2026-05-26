@@ -19,8 +19,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use localairouter_core::models::{
     AccountConverter, AccountInput, ApiProtocol, DailyStatsQuery, LogQuery, ProviderDefinition,
-    ProviderInput, RequestLogInput, ResolvedAccount, RevealSecretRequest, RouteBindingInput,
-    UnlockRequest,
+    ProviderInput, RequestLogInput, ResolvedAccount, RouteBindingInput,
 };
 use localairouter_core::{LocalAIRouterError, Repository, Result, extract_model};
 use reqwest::Client;
@@ -338,23 +337,7 @@ async fn handle_request(
             let health = state.repository.health().await?;
             Ok(json_response(StatusCode::OK, &health))
         }
-        (Method::POST, "/admin/unlock") => {
-            let unlock = parse_json::<UnlockRequest>(request).await?;
-            let response = state.repository.unlock(&unlock.master_password).await?;
-            Ok(json_response(StatusCode::OK, &response))
-        }
-        (Method::POST, "/admin/lock") => {
-            state.repository.lock().await;
-            state.response_store.clear();
-            Ok(json_response(
-                StatusCode::OK,
-                &localairouter_core::models::UnlockResponse {
-                    initialized: state.repository.is_initialized().await?,
-                    unlocked: false,
-                    message: "vault locked".into(),
-                },
-            ))
-        }
+
         (Method::GET, "/admin/providers") => {
             let providers = state.repository.list_providers().await?;
             Ok(json_response(StatusCode::OK, &providers))
@@ -378,18 +361,7 @@ async fn handle_request(
             let response = state.repository.upsert_account(account).await?;
             Ok(json_response(StatusCode::OK, &response))
         }
-        (Method::POST, _) if path.starts_with("/admin/accounts/") && path.ends_with("/reveal") => {
-            let account_id = path
-                .trim_start_matches("/admin/accounts/")
-                .trim_end_matches("/reveal")
-                .trim_end_matches('/');
-            let reveal = parse_json::<RevealSecretRequest>(request).await?;
-            let response = state
-                .repository
-                .reveal_account_secret(account_id, &reveal.master_password)
-                .await?;
-            Ok(json_response(StatusCode::OK, &response))
-        }
+
         (Method::GET, "/admin/routes") => {
             let routes = state.repository.list_routes().await?;
             Ok(json_response(StatusCode::OK, &routes))
@@ -1129,12 +1101,11 @@ fn json_response<T: Serialize>(status: StatusCode, value: &T) -> Response<Respon
 fn error_response(error: LocalAIRouterError) -> Response<ResponseBody> {
     let status = match &error {
         LocalAIRouterError::Validation(_) => StatusCode::BAD_REQUEST,
-        LocalAIRouterError::Locked => StatusCode::LOCKED,
         LocalAIRouterError::NotFound(_) => StatusCode::NOT_FOUND,
         LocalAIRouterError::Http(_) => StatusCode::BAD_GATEWAY,
-        LocalAIRouterError::Sqlite(_)
-        | LocalAIRouterError::Crypto(_)
-        | LocalAIRouterError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        LocalAIRouterError::Sqlite(_) | LocalAIRouterError::Io(_) => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
         LocalAIRouterError::Message(_) => StatusCode::BAD_REQUEST,
     };
     let payload = serde_json::json!({
@@ -1486,7 +1457,9 @@ mod tests {
                 converter,
                 enabled: true,
                 note: None,
-                has_secret: true,
+                api_key_masked: None,
+                api_key: None,
+
                 created_at: "2026-01-01T00:00:00Z".into(),
                 updated_at: "2026-01-01T00:00:00Z".into(),
             },

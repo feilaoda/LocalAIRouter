@@ -73,7 +73,7 @@ dd {
 
 .panel,
 .topbar,
-.vault-dialog-card {
+.dialog-card {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -84,7 +84,7 @@ dd {
 
 .panel::before,
 .topbar::before,
-.vault-dialog-card::before {
+.dialog-card::before {
   content: "";
   position: absolute;
   inset: 0 0 auto;
@@ -95,7 +95,7 @@ dd {
 
 .panel,
 .topbar,
-.vault-dialog-card {
+.dialog-card {
   padding: 18px;
 }
 
@@ -335,27 +335,8 @@ dd {
   font-size: 0.72rem;
 }
 
-#vault-action-button {
-  width: auto;
-  min-width: 120px;
-  padding: 10px 14px;
-}
 
-#vault-action-button[data-mode="lock"] {
-  border: 1px solid var(--line);
-  background: #fafafa;
-  color: var(--ink);
-  box-shadow: none;
-}
 
-.vault-dialog {
-  width: min(460px, calc(100vw - 24px));
-  max-width: 100%;
-  margin: auto;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
 
 .entity-dialog {
   max-width: 100%;
@@ -373,10 +354,6 @@ dd {
   width: min(560px, calc(100vw - 24px));
 }
 
-.vault-dialog::backdrop {
-  background: rgba(31, 31, 31, 0.18);
-  backdrop-filter: blur(4px);
-}
 
 .entity-dialog::backdrop {
   background: rgba(31, 31, 31, 0.18);
@@ -410,7 +387,7 @@ dd {
   display: none;
 }
 
-.vault-dialog-card {
+.dialog-card {
   max-height: min(860px, calc(100vh - 32px));
   overflow: auto;
 }
@@ -1064,15 +1041,7 @@ button:disabled {
   gap: 8px;
 }
 
-.account-secret-tools {
-  display: grid;
-  gap: 8px;
-}
 
-.account-secret-tools[hidden],
-.secret-result[hidden] {
-  display: none !important;
-}
 
 .secret-inline-head {
   display: flex;
@@ -1685,7 +1654,7 @@ button:disabled {
 
   .panel,
   .topbar,
-  .vault-dialog-card {
+  .dialog-card {
     padding: 16px;
   }
 
@@ -1710,10 +1679,7 @@ button:disabled {
 
   .entity-dialog.wide-dialog,
   .entity-dialog.medium-dialog,
-  .vault-dialog {
-    width: min(100vw - 16px, 100%);
-  }
-
+  
   .filter-tab {
     flex: 1 1 auto;
     text-align: center;

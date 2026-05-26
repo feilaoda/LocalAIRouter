@@ -29,7 +29,6 @@ const ZH_MESSAGES = {
   Stop: "停止",
   Restart: "重启",
   "Daemon Log": "Daemon 日志",
-  "Unlock Vault": "解锁 Vault",
   Coverage: "覆盖情况",
   "Routing Snapshot": "路由快照",
   Today: "今天",
@@ -52,8 +51,6 @@ const ZH_MESSAGES = {
   "Built-ins can be tuned in place. Custom providers can be edited or removed once no accounts and routes depend on them.":
     "内置 Provider 可直接调整。自定义 Provider 只有在没有账号和路由依赖时才能编辑或删除。",
   "New Provider": "新建 Provider",
-  "Vault Contents": "Vault 内容",
-  "Account Pool": "账号池",
   "Each account belongs to one provider. Disable accounts to keep them available for audit without letting routes hit them.":
     "每个账号都属于一个 Provider。禁用账号后仍可保留审计信息，但不会再被路由命中。",
   "New Account": "新建账号",
@@ -90,11 +87,8 @@ const ZH_MESSAGES = {
   "Selected account {name} is disabled.": "当前选中的账号 {name} 已禁用。",
   "Provider {slug} has no default route.": "Provider {slug} 还没有默认路由。",
   "Secret is missing for account {id}.": "账号 {id} 缺少已存储的密钥。",
-  "Vault is not initialized.": "Vault 尚未初始化。",
-  "Master password must not be empty.": "主密码不能为空。",
   "New accounts require an API key.": "新建账号必须填写 API Key。",
-  "API key must not be empty when provided.":
-    "填写 API Key 时，内容不能为空。",
+  "API key must not be empty when provided.": "填写 API Key 时，内容不能为空。",
   Provider: "Provider",
   All: "全部",
   Account: "账号",
@@ -140,9 +134,6 @@ const ZH_MESSAGES = {
     "为内置和自定义 Provider 生成 localhost 接入说明。Codex 和 Claude Code 预设遵循 Provider 协议兼容性，同时每个 Provider 仍保留手动 cURL 入口。",
   Refresh: "刷新",
   "Control Plane": "控制面",
-  "Close vault dialog": "关闭 Vault 对话框",
-  "Master Password": "主密码",
-  "Unlock or initialize the local vault": "解锁或初始化本地 Vault",
   Unlock: "解锁",
   "Upstream Registry": "上游注册表",
   "Close provider dialog": "关闭 Provider 对话框",
@@ -158,9 +149,6 @@ const ZH_MESSAGES = {
   "Close account dialog": "关闭账号对话框",
   Name: "名称",
   "Primary Account": "主账号",
-  "Leave blank to keep the existing secret": "留空则保留当前密钥",
-  "Vault Password": "Vault 密码",
-  "Enter vault password to reveal this key": "输入 Vault 密码以查看当前密钥",
   Reveal: "查看",
   "Copy API Key": "复制 API Key",
   "Stored API Key": "已存储的 API Key",
@@ -170,16 +158,6 @@ const ZH_MESSAGES = {
   "Default Model": "默认模型",
   "Optional. Overrides client request model for this account":
     "可选。配置后此账号会覆盖客户端请求里的模型。",
-  "Protocol Converter": "协议转换",
-  "No conversion": "不转换",
-  "DeepSeek V4 -> OpenAI": "DeepSeek V4 -> OpenAI",
-  "Use only when this account's upstream API shape differs from the provider protocol.":
-    "仅在这个账号的上游 API 形态和 Provider 协议不一致时使用。",
-  "DeepSeek V4 converter is available for OpenAI protocol providers. Codex Responses requests are sent upstream as Chat Completions and converted back.":
-    "DeepSeek V4 转换仅适用于 OpenAI 协议 Provider。Codex Responses 请求会上游转成 Chat Completions，再转换回来。",
-  "This converter is only available for OpenAI protocol providers.":
-    "这个转换器只适用于 OpenAI 协议 Provider。",
-  "converter {name}": "转换 {name}",
   "Optional. Overrides client request model for this provider":
     "可选。配置后此 Provider 会覆盖客户端请求里的模型。",
   "default model {model}": "默认模型 {model}",
@@ -223,35 +201,18 @@ const ZH_MESSAGES = {
   completed: "完成",
   Available: "可用",
   Locked: "已锁定",
-  "Not initialized": "未初始化",
   Offline: "离线",
   "Daemon offline": "Daemon 离线",
   "Daemon starting": "Daemon 启动中",
   "Daemon unreachable": "Daemon 不可达",
   "Daemon Online": "Daemon 在线",
-  "Vault Locked": "Vault 已锁定",
-  "Setup Required": "需要初始化",
   "Daemon online": "Daemon 在线",
   "Daemon Starting": "Daemon 启动中",
   "Daemon Offline": "Daemon 离线",
   "Setup required": "需要初始化",
-  "Vault locked": "Vault 已锁定",
-  "Vault available.": "Vault 已可用。",
-  "Vault initialized and available.": "Vault 已初始化并可用。",
-  "Vault locked.": "Vault 已锁定。",
-  "Lock Vault": "锁定 Vault",
-  "Initialize Vault": "初始化 Vault",
   Initialize: "初始化",
   "Waiting for the local daemon health endpoint to come online.":
     "正在等待本地 Daemon 的健康检查接口上线。",
-  "Start or restart the daemon before unlocking the vault.":
-    "请先启动或重启 Daemon，再解锁 Vault。",
-  "The vault is already unlocked for this session. Use Lock Vault in the header to seal credentials again.":
-    "当前会话的 Vault 已解锁。可通过顶部的 Lock Vault 再次封存凭证。",
-  "Enter the master password to unlock encrypted credentials for this local session.":
-    "输入主密码以解锁当前本地会话中的加密凭证。",
-  "Choose a master password to initialize the local encrypted vault on first use.":
-    "首次使用时，请设置主密码来初始化本地加密 Vault。",
   Default: "默认",
   "Set Default": "设为默认",
   "Provider default": "Provider 默认",
@@ -269,8 +230,6 @@ const ZH_MESSAGES = {
   Usage: "用法",
   Req: "请求",
   Res: "响应",
-  "secret stored": "已存密钥",
-  "missing secret": "缺少密钥",
   "account base url": "账号 Base URL",
   "provider base url": "Provider Base URL",
   "No account": "无账号",
@@ -368,11 +327,6 @@ const ZH_MESSAGES = {
   "Failed to sync Codex config.": "同步 Codex 配置失败。",
   "Failed to sync Claude config.": "同步 Claude 配置失败。",
   "Copied {value} URL.": "已复制 {value} URL。",
-  "Open an existing account before revealing its API key.":
-    "请先打开已有账号，再查看其 API Key。",
-  "Master password cannot be empty.": "主密码不能为空。",
-  "API key revealed.": "API Key 已显示。",
-  "API key copied.": "API Key 已复制。",
   "Provider ID could not be generated from the display name.":
     "无法根据显示名称生成 Provider ID。",
   "Provider ID may only use lowercase letters, digits, and dashes.":
@@ -402,9 +356,6 @@ const ZH_MESSAGES = {
   "Delete Route: {name}": "删除路由：{name}",
   "Delete this provider definition? This only succeeds after all dependent accounts and routes are removed.":
     "确认删除这个 Provider 定义吗？只有在其依赖的账号和路由都被删除后才能成功。",
-  "Delete this account and its stored secret? Any route bindings pointing at it will also be removed.":
-    "确认删除这个账号及其已存储密钥吗？所有指向它的路由绑定也会被一并移除。",
-  "Delete this model override route?": "确认删除这条模型覆盖路由吗？",
   "No accounts under {name} yet.": "{name} 下还没有账号。",
   "{name} is now the default account for {provider}.":
     "{name} 现已成为 {provider} 的默认账号。",
@@ -415,15 +366,8 @@ const ZH_MESSAGES = {
     "这个 Provider 没有可用账号。请先新增或重新启用账号再绑定路由。",
   "Select a provider to see enabled accounts.":
     "先选择一个 Provider，才能看到可用账号。",
-  "Store one encrypted credential set per account. Leave Base URL Override empty to inherit the provider upstream endpoint.":
-    "每个账号保存一套加密凭证。Base URL Override 留空时，会继承 Provider 的上游地址。",
-  "Enter the vault password to reveal the current plaintext key for {name}.":
-    "输入 Vault 密码以查看 {name} 当前保存的明文密钥。",
   "View Stored Key": "查看已存密钥",
   "Hide Stored Key": "隐藏已存密钥",
-  "Leave the API key blank to keep the existing encrypted secret. Use View Stored Key below if you need to inspect the current key after re-entering the vault password.":
-    "API Key 留空时会保留当前已加密密钥。如果需要查看当前密钥，可在下方重新输入 Vault 密码后使用 View Stored Key。",
-  "Edit Account: {name}": "编辑账号：{name}",
   "Update Account": "更新",
   "Set one default account per provider, then add optional model-prefix overrides for fine-grained account selection.":
     "每个 Provider 先设置一个默认账号，再按需添加模型前缀覆盖，实现更细粒度的账号选择。",
@@ -433,10 +377,6 @@ const ZH_MESSAGES = {
     "可以修改 Provider、前缀或账号绑定。更改 Provider 或前缀会替换原有绑定。",
   "This row is the provider default account. Updating the bound account here changes the provider default used by non-matching requests.":
     "这一行是 Provider 的默认账号。这里修改绑定账号后，所有未命中覆盖规则的请求都会使用新的默认账号。",
-  "Unlock Vault before creating or editing providers, accounts, or routes.":
-    "新建或编辑 Provider、账号、路由前，请先解锁 Vault。",
-  "Wait for the daemon to come online, then unlock the vault.":
-    "请等待 Daemon 上线后再解锁 Vault。",
   "Process running but health endpoint unavailable":
     "进程正在运行，但健康检查接口不可用",
   "No compatible provider is available for the selected client profile.":
@@ -540,9 +480,7 @@ const state = {
   providerEditor: null,
   accountEditor: null,
   routeEditor: null,
-  revealedSecret: "",
   openMetricTooltip: null,
-  hasAutoPromptedVault: false,
   settingsDirty: false,
   rebuildingTokenStats: false,
   tokenRebuildStatus: "",
@@ -551,7 +489,6 @@ let pendingConfirmation = null;
 
 const elements = {
   daemonChip: document.querySelector("#daemon-chip"),
-  vaultState: document.querySelector("#vault-state"),
   dbPath: document.querySelector("#db-path"),
   daemonPort: document.querySelector("#daemon-port"),
   startedAt: document.querySelector("#started-at"),
@@ -566,14 +503,6 @@ const elements = {
   stopDaemonButton: document.querySelector("#stop-daemon-button"),
   restartDaemonButton: document.querySelector("#restart-daemon-button"),
   openDaemonLogButton: document.querySelector("#open-daemon-log-button"),
-  unlockForm: document.querySelector("#unlock-form"),
-  masterPassword: document.querySelector("#master-password"),
-  unlockSubmit: document.querySelector("#unlock-submit"),
-  vaultActionButton: document.querySelector("#vault-action-button"),
-  vaultDialog: document.querySelector("#vault-dialog"),
-  vaultDialogTitle: document.querySelector("#vault-dialog-title"),
-  vaultDialogCopy: document.querySelector("#vault-dialog-copy"),
-  closeVaultDialog: document.querySelector("#close-vault-dialog"),
   localeSelect: document.querySelector("#locale-select"),
   tabButtons: Array.from(document.querySelectorAll(".tab-button")),
   tabPanels: Array.from(document.querySelectorAll(".tab-panel")),
@@ -637,20 +566,9 @@ const elements = {
   accountProvider: document.querySelector("#account-provider"),
   accountName: document.querySelector("#account-name"),
   accountApiKey: document.querySelector("#account-api-key"),
-  accountSecretTools: document.querySelector("#account-secret-tools"),
-  accountSecretCopy: document.querySelector("#account-secret-copy"),
-  accountSecretToggle: document.querySelector("#account-secret-toggle"),
-  accountSecretPanel: document.querySelector("#account-secret-panel"),
-  accountSecretPassword: document.querySelector("#account-secret-password"),
-  accountSecretReveal: document.querySelector("#account-secret-reveal"),
-  accountSecretValue: document.querySelector("#account-secret-value"),
-  accountSecretCopyButton: document.querySelector(
-    "#account-secret-copy-button",
-  ),
+  accountKeyToggleView: document.querySelector("#account-key-toggle-view"),
   accountBaseUrl: document.querySelector("#account-base-url"),
   accountDefaultModel: document.querySelector("#account-default-model"),
-  accountConverter: document.querySelector("#account-converter"),
-  accountConverterHint: document.querySelector("#account-converter-hint"),
   accountNote: document.querySelector("#account-note"),
   accountEnabled: document.querySelector("#account-enabled"),
   accountsProviderTabs: document.querySelector("#accounts-provider-tabs"),
@@ -689,7 +607,6 @@ const elements = {
 let liveMonitorRefreshing = false;
 let liveDashboardRefreshing = false;
 let liveStatsRefreshing = false;
-let pendingPostUnlockAction = null;
 
 window.addEventListener("DOMContentLoaded", async () => {
   startUiDevPolling();
@@ -818,7 +735,6 @@ function applyLocale(rerender) {
   renderOnboarding();
   renderSettings();
   renderProviderPathDemo();
-  renderAccountSecretControls();
 }
 
 function hasDesktopIntegration() {
@@ -935,18 +851,6 @@ function bindEvents() {
     }
   });
 
-  elements.vaultDialog.addEventListener("click", (event) => {
-    if (event.target === elements.vaultDialog) {
-      closeVaultDialog();
-    }
-  });
-
-  elements.closeVaultDialog.addEventListener("click", closeVaultDialog);
-  elements.providerDialog.addEventListener("click", (event) => {
-    if (event.target === elements.providerDialog) {
-      closeProviderDialog();
-    }
-  });
   elements.accountDialog.addEventListener("click", (event) => {
     if (event.target === elements.accountDialog) {
       closeAccountDialog();
@@ -972,57 +876,6 @@ function bindEvents() {
   elements.closeAccountDialog.addEventListener("click", closeAccountDialog);
   elements.closeRouteDialog.addEventListener("click", closeRouteDialog);
   elements.closeConfirmDialog.addEventListener("click", closeConfirmDialog);
-  elements.accountSecretToggle.addEventListener("click", () => {
-    if (!state.accountEditor?.id || !state.accountEditor?.hasSecret) {
-      return;
-    }
-    const shouldOpen = elements.accountSecretPanel.hidden;
-    if (!shouldOpen) {
-      clearAccountSecretReveal();
-      renderAccountSecretControls();
-      return;
-    }
-    elements.accountSecretPanel.hidden = false;
-    renderAccountSecretControls();
-    window.setTimeout(() => elements.accountSecretPassword.focus(), 0);
-  });
-  elements.accountSecretReveal.addEventListener("click", async () => {
-    const account = state.accountEditor;
-    const masterPassword = elements.accountSecretPassword.value.trim();
-    if (!account?.id) {
-      notify(
-        t("Open an existing account before revealing its API key."),
-        "error",
-      );
-      return;
-    }
-    if (!masterPassword) {
-      notify(t("Master password cannot be empty."), "error");
-      return;
-    }
-
-    const revealed = await perform(
-      () =>
-        api(`/admin/accounts/${account.id}/reveal`, {
-          method: "POST",
-          body: { masterPassword },
-        }),
-      t("API key revealed."),
-    );
-    if (!revealed) {
-      return;
-    }
-
-    state.revealedSecret = revealed.apiKey || "";
-    elements.accountSecretPassword.value = "";
-    renderAccountSecretControls();
-  });
-  elements.accountSecretCopyButton.addEventListener("click", async () => {
-    if (!state.revealedSecret) {
-      return;
-    }
-    await copyText(state.revealedSecret, t("API key copied."));
-  });
   elements.confirmCancel.addEventListener("click", closeConfirmDialog);
   elements.confirmForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1032,55 +885,6 @@ function bindEvents() {
     if (action) {
       await action();
     }
-  });
-
-  elements.unlockForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const masterPassword = elements.masterPassword.value.trim();
-    if (!masterPassword) {
-      notify(t("Master password cannot be empty."), "error");
-      return;
-    }
-
-    const response = await perform(
-      () =>
-        api("/admin/unlock", {
-          method: "POST",
-          body: { masterPassword },
-        }),
-      state.health?.initialized
-        ? t("Vault available.")
-        : t("Vault initialized and available."),
-    );
-    if (!response) {
-      return;
-    }
-
-    const postUnlockAction = pendingPostUnlockAction;
-    pendingPostUnlockAction = null;
-    elements.masterPassword.value = "";
-    closeVaultDialog({ preservePendingAction: true });
-    await refreshAll();
-    if (typeof postUnlockAction === "function") {
-      postUnlockAction();
-    }
-  });
-
-  elements.vaultActionButton.addEventListener("click", async () => {
-    if (state.health?.unlocked) {
-      const response = await perform(
-        () => api("/admin/lock", { method: "POST" }),
-        t("Vault locked."),
-      );
-      if (!response) {
-        return;
-      }
-      closeVaultDialog();
-      await refreshAll();
-      return;
-    }
-
-    openVaultDialog();
   });
 
   elements.startDaemonButton.addEventListener("click", async () => {
@@ -1248,7 +1052,8 @@ function bindEvents() {
       );
     } catch (error) {
       console.error(error);
-      state.tokenRebuildStatus = error?.message || t("Failed to rebuild token stats.");
+      state.tokenRebuildStatus =
+        error?.message || t("Failed to rebuild token stats.");
     } finally {
       state.rebuildingTokenStats = false;
       renderSettings();
@@ -1256,7 +1061,9 @@ function bindEvents() {
   });
   elements.settingsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const daemonPort = Number(elements.settingsDaemonPort.value || DEFAULT_PORT);
+    const daemonPort = Number(
+      elements.settingsDaemonPort.value || DEFAULT_PORT,
+    );
     const allowLanAccess = Boolean(elements.settingsAllowLan.checked);
     const monitorBufferLimit = Number(
       elements.settingsMonitorBuffer.value || DEFAULT_MONITOR_BUFFER_LIMIT,
@@ -1306,16 +1113,16 @@ function bindEvents() {
     await refreshOnboarding();
     renderProviderPathDemo();
     notify(
-      wasRunning ? t("Settings saved. Daemon restarted.") : t("Settings saved."),
+      wasRunning
+        ? t("Settings saved. Daemon restarted.")
+        : t("Settings saved."),
       "success",
     );
   });
 
   elements.openProviderDialog.addEventListener("click", () => {
-    requireVaultEditorAccess(() => {
-      resetProviderForm();
-      openDialog(elements.providerDialog, elements.providerName);
-    });
+    resetProviderForm();
+    openDialog(elements.providerDialog, elements.providerName);
   });
   elements.providerProtocol.addEventListener("change", () =>
     applyProviderProtocolDefaults(true),
@@ -1362,14 +1169,16 @@ function bindEvents() {
   });
 
   elements.openAccountDialog.addEventListener("click", () => {
-    requireVaultEditorAccess(() => {
-      resetAccountForm();
-      openDialog(elements.accountDialog, elements.accountName);
+    resetAccountForm();
+    openDialog(elements.accountDialog, elements.accountName);
+  });
+  elements.accountProvider.addEventListener("change", () => {});
+
+  if (elements.accountKeyToggleView) {
+    elements.accountKeyToggleView.addEventListener("click", () => {
+      toggleAccountApiKeyVisibility();
     });
-  });
-  elements.accountProvider.addEventListener("change", () => {
-    syncAccountConverterOptions();
-  });
+  }
 
   elements.accountForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1405,10 +1214,8 @@ function bindEvents() {
   });
 
   elements.openRouteDialog.addEventListener("click", () => {
-    requireVaultEditorAccess(() => {
-      resetRouteForm();
-      openDialog(elements.routeDialog, elements.routeProvider);
-    });
+    resetRouteForm();
+    openDialog(elements.routeDialog, elements.routeProvider);
   });
 
   elements.routeForm.addEventListener("submit", async (event) => {
@@ -1536,6 +1343,7 @@ async function refreshDaemonStatus(silent = true) {
   syncDaemonPanels();
   renderChrome();
   renderDashboard();
+  renderSettings();
 }
 
 async function refreshHealth(options = {}) {
@@ -1545,21 +1353,13 @@ async function refreshHealth(options = {}) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       state.health = await api("/health", { silent: true });
-      const tone = state.health.unlocked
-        ? "ok"
-        : state.health.initialized
-          ? "warn"
-          : "idle";
-      const chipText = state.health.unlocked
-        ? t("Daemon Online")
-        : state.health.initialized
-          ? t("Vault Locked")
-          : t("Setup Required");
+      const tone = "ok";
+      const chipText = t("Daemon Online");
       setDaemonChip(chipText, tone);
       syncDaemonPanels();
       renderChrome();
       renderDashboard();
-      maybeAutoOpenVaultDialog();
+      renderSettings();
       return;
     } catch (error) {
       state.health = null;
@@ -1579,6 +1379,7 @@ async function refreshHealth(options = {}) {
   }
   renderChrome();
   renderDashboard();
+  renderSettings();
 }
 
 async function refreshProviders() {
@@ -1630,6 +1431,12 @@ async function refreshDashboardLogs() {
     state.dashboardLogs = await fetchLogs(todayLogQuery(), true);
   } catch (error) {
     state.dashboardLogs = [];
+    console.error(error);
+  }
+  try {
+    state.dailyStats = await fetchDailyStats(30, true);
+  } catch (error) {
+    state.dailyStats = [];
     console.error(error);
   }
   renderDashboard();
@@ -1787,7 +1594,9 @@ function renderStatsSummary(series) {
     return;
   }
   if (!state.dailyStats.length) {
-    elements.statsSummaryList.replaceChildren(emptyNode(t("No daily stats yet.")));
+    elements.statsSummaryList.replaceChildren(
+      emptyNode(t("No daily stats yet.")),
+    );
     return;
   }
 
@@ -1799,10 +1608,7 @@ function renderStatsSummary(series) {
     (sum, point) => sum + point.requestCount,
     0,
   );
-  const totalTokens = series.reduce(
-    (sum, point) => sum + point.totalTokens,
-    0,
-  );
+  const totalTokens = series.reduce((sum, point) => sum + point.totalTokens, 0);
   const summaryItems = [
     { label: t("Today Calls"), value: String(today.requestCount) },
     { label: t("Today Tokens"), value: formatTokenCount(today.totalTokens) },
@@ -1838,7 +1644,9 @@ function renderStatsChart(container, series, key, formatter, tone) {
   );
   const detail = document.createElement("div");
   detail.className = "stats-chart-detail";
-  const detailValue = selectedPoint ? finiteNumber(selectedPoint[key]) ?? 0 : 0;
+  const detailValue = selectedPoint
+    ? (finiteNumber(selectedPoint[key]) ?? 0)
+    : 0;
   const detailMeta =
     key === "requestCount"
       ? `${selectedPoint?.successCount ?? 0} ${t("Success")}`
@@ -1859,7 +1667,8 @@ function renderStatsChart(container, series, key, formatter, tone) {
   series.forEach((point, index) => {
     const value = finiteNumber(point[key]) ?? 0;
     const height = value > 0 ? Math.max((value / maxValue) * 100, 4) : 2;
-    const showDay = index === 0 || index === series.length - 1 || index % 5 === 4;
+    const showDay =
+      index === 0 || index === series.length - 1 || index % 5 === 4;
     const selected = point.day === state.statsSelectedDay;
     const tooltipValue =
       key === "requestCount"
@@ -1898,8 +1707,14 @@ function renderStatsChart(container, series, key, formatter, tone) {
 
 function renderMetrics() {
   const todayLogs = state.dashboardLogs;
+  const todayStats = todayDailyStats();
   const latencyLogs = latencyMetricLogs(todayLogs);
   const tokenUsage = aggregateTokenUsage(todayLogs);
+  const requestCount = todayStats?.requestCount ?? todayLogs.length;
+  const successCount =
+    todayStats?.successCount ??
+    todayLogs.filter((log) => isSuccessStatus(log.statusCode)).length;
+  const totalTokens = todayStats?.totalTokens ?? tokenUsage.total;
   const accountsUsed = new Set(
     todayLogs
       .map((log) => log.accountId)
@@ -1909,21 +1724,21 @@ function renderMetrics() {
     {
       key: "requests",
       label: t("Today's Requests"),
-      value: String(todayLogs.length),
+      value: String(requestCount),
       note: t("Local day request count"),
       tone: "accent",
     },
     {
       key: "success",
       label: t("Today's Success"),
-      value: formatSuccessRate(todayLogs),
+      value: formatSuccessRateFromCounts(requestCount, successCount),
       note: t("HTTP status below 400"),
       tone: "accent",
     },
     {
       key: "total-tokens",
       label: t("Today's Tokens"),
-      value: formatTokenCount(tokenUsage.total),
+      value: formatTokenCount(totalTokens),
       note: t(
         "Input and output tokens are counted. Cached tokens are included when providers report them.",
       ),
@@ -2123,10 +1938,8 @@ function renderProviders() {
     `;
     const buttons = item.querySelectorAll("button");
     buttons[0].addEventListener("click", () => {
-      requireVaultEditorAccess(() => {
-        fillProviderForm(provider);
-        openDialog(elements.providerDialog, elements.providerName);
-      });
+      fillProviderForm(provider);
+      openDialog(elements.providerDialog, elements.providerName);
     });
     const syncButton = item.querySelector(".provider-sync-config");
     syncButton?.addEventListener("click", async () => {
@@ -2209,15 +2022,14 @@ function renderAccounts() {
     const provider = getProvider(account.provider);
     const defaultRoute = defaultRouteForProvider(account.provider);
     const isDefaultAccount = defaultRoute?.accountId === account.id;
-  const routeCount = countRoutesForAccount(account.id);
-  const upstreamSummary =
+    const routeCount = countRoutesForAccount(account.id);
+    const upstreamSummary =
       account.baseUrl || provider?.baseUrl || t("Uses provider base URL.");
     const detailParts = [upstreamSummary];
     if (account.defaultModel) {
-      detailParts.push(t("default model {model}", { model: account.defaultModel }));
-    }
-    if (account.converter && account.converter !== "none") {
-      detailParts.push(t("converter {name}", { name: converterDisplayLabel(account.converter) }));
+      detailParts.push(
+        t("default model {model}", { model: account.defaultModel }),
+      );
     }
     if (account.note) {
       detailParts.push(account.note);
@@ -2235,9 +2047,12 @@ function renderAccounts() {
       </div>
       <div class="data-meta">
         <span class="pill">${escapeHtml(provider ? provider.displayName : account.provider)}</span>
-        <span class="pill ${account.hasSecret ? "ok" : "warn"}">${account.hasSecret ? t("secret stored") : t("missing secret")}</span>
+        ${
+          account.apiKeyMasked
+            ? `<span class="pill ok">${escapeHtml(t("secret stored"))}</span>`
+            : `<span class="pill warn">${escapeHtml(t("missing secret"))}</span>`
+        }
         <span class="pill ${account.baseUrl ? "warm" : ""}">${escapeHtml(account.baseUrl ? t("account base url") : t("provider base url"))}</span>
-        ${account.converter && account.converter !== "none" ? `<span class="pill warm">${escapeHtml(converterDisplayLabel(account.converter))}</span>` : ""}
         ${isDefaultAccount ? `<span class="pill ok">${escapeHtml(t("default"))}</span>` : ""}
         <span class="pill">${escapeHtml(routeCountLabel(routeCount))}</span>
         <span class="pill">${escapeHtml(t("updated {time}", { time: formatRelativeTime(account.updatedAt) }))}</span>
@@ -2276,10 +2091,8 @@ function renderAccounts() {
       renderDashboard();
     });
     editButton.addEventListener("click", () => {
-      requireVaultEditorAccess(() => {
-        fillAccountForm(account);
-        openDialog(elements.accountDialog, elements.accountName);
-      });
+      fillAccountForm(account);
+      openDialog(elements.accountDialog, elements.accountName);
     });
     disableButton.addEventListener("click", async () => {
       const response = await perform(
@@ -2320,6 +2133,7 @@ function renderAccounts() {
         },
       });
     });
+
     return item;
   });
 
@@ -2330,7 +2144,9 @@ function renderAccounts() {
 
   const provider = getProvider(normalizeAccountProviderFilter());
   if (provider && canImportAccountFromClientConfig(provider)) {
-    elements.accountsList.replaceChildren(renderAccountImportEmptyState(provider));
+    elements.accountsList.replaceChildren(
+      renderAccountImportEmptyState(provider),
+    );
     return;
   }
 
@@ -2360,9 +2176,7 @@ function renderAccountImportEmptyState(provider) {
   button.className = "ghost";
   button.textContent = t("Import");
   button.addEventListener("click", () => {
-    requireVaultEditorAccess(() => {
-      void importAccountFromClientConfig(provider);
-    });
+    void importAccountFromClientConfig(provider);
   });
   node.append(copy, button);
   return node;
@@ -2370,7 +2184,9 @@ function renderAccountImportEmptyState(provider) {
 
 async function importAccountFromClientConfig(provider) {
   const command =
-    provider.slug === "claude-code" ? "import_claude_account" : "import_codex_account";
+    provider.slug === "claude-code"
+      ? "import_claude_account"
+      : "import_codex_account";
   const failureMessage =
     provider.slug === "claude-code"
       ? t("Failed to import Claude Code account.")
@@ -2390,7 +2206,9 @@ async function importAccountFromClientConfig(provider) {
         method: "POST",
         body: imported,
       }),
-    t("Imported account {name}.", { name: imported.name || provider.displayName }),
+    t("Imported account {name}.", {
+      name: imported.name || provider.displayName,
+    }),
   );
   if (!account) {
     return;
@@ -2466,10 +2284,8 @@ function renderRoutes() {
       );
     });
     editButton.addEventListener("click", () => {
-      requireVaultEditorAccess(() => {
-        fillRouteForm(route);
-        openDialog(elements.routeDialog, elements.routeProvider);
-      });
+      fillRouteForm(route);
+      openDialog(elements.routeDialog, elements.routeProvider);
     });
     deleteButton.addEventListener("click", async () => {
       if (isDefaultRoute) {
@@ -2515,7 +2331,9 @@ function renderMonitor() {
     const monitorCopyLabel = t("Copy Full Log");
     const monitorCopyTitle = entry.logId
       ? t("Copy Full Log")
-      : t("Full log is still being written. Try again after the request completes.");
+      : t(
+          "Full log is still being written. Try again after the request completes.",
+        );
     const item = document.createElement("article");
     item.className = "data-item monitor-item";
     item.innerHTML = `
@@ -2533,7 +2351,6 @@ function renderMonitor() {
       <div class="data-meta">
         <span class="pill">${escapeHtml(providerName)}</span>
         <span class="pill">${escapeHtml(accountName)}</span>
-        ${entry.converter ? `<span class="pill warm">${escapeHtml(entry.converter)}</span>` : ""}
         ${entry.upstreamUrl ? `<span class="pill" title="${escapeHtml(entry.upstreamUrl)}">${escapeHtml(truncateMiddle(entry.upstreamUrl, 42))}</span>` : ""}
         <span class="pill">${escapeHtml(entry.streamed ? t("streamed") : t("sync"))}</span>
         <span class="pill">${escapeHtml(monitorDurationLabel(entry))}</span>
@@ -2909,7 +2726,6 @@ function syncProviderOptions() {
   }
 
   elements.accountSubmit.disabled = !accountProviders.length;
-  syncAccountConverterOptions();
   syncRouteAccountOptions();
 }
 
@@ -3228,7 +3044,6 @@ function syncProviderProxyPath() {
 function resetAccountForm() {
   state.accountEditor = null;
   clearFormError(elements.accountFormError);
-  clearAccountSecretReveal();
   elements.accountFormTitle.textContent = t("New Account");
   elements.accountFormCopy.textContent = t(
     "Store one encrypted credential set per account. Leave Base URL Override empty to inherit the provider upstream endpoint.",
@@ -3237,9 +3052,9 @@ function resetAccountForm() {
   elements.accountId.value = "";
   elements.accountName.value = "";
   elements.accountApiKey.value = "";
+  setAccountApiKeyVisible(false);
   elements.accountBaseUrl.value = "";
   elements.accountDefaultModel.value = "";
-  elements.accountConverter.value = "none";
   elements.accountNote.value = "";
   elements.accountEnabled.checked = true;
   const preferredProvider =
@@ -3252,66 +3067,6 @@ function resetAccountForm() {
   } else {
     elements.accountProvider.value = "";
   }
-  syncAccountConverterOptions();
-  renderAccountSecretControls();
-}
-
-function clearAccountSecretReveal() {
-  state.revealedSecret = "";
-  elements.accountSecretPanel.hidden = true;
-  elements.accountSecretPassword.value = "";
-  elements.accountSecretValue.value = "";
-}
-
-function renderAccountSecretControls() {
-  const account = state.accountEditor;
-  const provider = account ? getProvider(account.provider) : null;
-  const visible = Boolean(account?.id && account?.hasSecret);
-  elements.accountSecretTools.hidden = !visible;
-  if (!visible) {
-    return;
-  }
-
-  const accountLabel = account.name || "this account";
-  elements.accountSecretCopy.textContent = `${
-    provider?.displayName || account.provider
-  } · ${t(
-    "Enter the vault password to reveal the current plaintext key for {name}.",
-    {
-      name: accountLabel,
-    },
-  )}`;
-  elements.accountSecretToggle.textContent = elements.accountSecretPanel.hidden
-    ? t("View Stored Key")
-    : t("Hide Stored Key");
-  elements.accountSecretValue.value = state.revealedSecret;
-  elements.accountSecretCopyButton.disabled = !state.revealedSecret;
-}
-
-function syncAccountConverterOptions() {
-  const provider = getProvider(elements.accountProvider.value);
-  const selected = elements.accountConverter.value || "none";
-  const openAiCompatible = provider?.protocol === "openai";
-  const options = [
-    optionNode("none", t("No conversion")),
-    optionNode("deepseek-v4-to-openai", t("DeepSeek V4 -> OpenAI")),
-  ];
-  elements.accountConverter.replaceChildren(...options);
-  elements.accountConverter.value =
-    selected === "deepseek-v4-to-openai" && openAiCompatible
-      ? selected
-      : "none";
-  elements.accountConverter.disabled = !provider;
-  for (const option of elements.accountConverter.options) {
-    if (option.value === "deepseek-v4-to-openai") {
-      option.disabled = !openAiCompatible;
-    }
-  }
-  elements.accountConverterHint.textContent = openAiCompatible
-    ? t(
-        "DeepSeek V4 converter is available for OpenAI protocol providers. Codex Responses requests are sent upstream as Chat Completions and converted back.",
-      )
-    : t("This converter is only available for OpenAI protocol providers.");
 }
 
 function fillAccountForm(account) {
@@ -3319,29 +3074,52 @@ function fillAccountForm(account) {
     id: account.id,
     provider: account.provider,
     name: account.name,
-    hasSecret: account.hasSecret,
   };
   clearFormError(elements.accountFormError);
-  clearAccountSecretReveal();
   elements.accountFormTitle.textContent = t("Edit Account: {name}", {
     name: account.name,
   });
   elements.accountFormCopy.textContent = t(
-    "Leave the API key blank to keep the existing encrypted secret. Use View Stored Key below if you need to inspect the current key after re-entering the vault password.",
+    "Store one API key per account. Override Base URL only when the account uses a different upstream endpoint.",
   );
   elements.accountSubmit.textContent = t("Update Account");
   elements.accountId.value = account.id;
   syncProviderOptions();
   elements.accountProvider.value = account.provider;
   elements.accountName.value = account.name;
-  elements.accountApiKey.value = "";
+  elements.accountApiKey.value = account.apiKey || "";
+  setAccountApiKeyVisible(false);
   elements.accountBaseUrl.value = account.baseUrl || "";
   elements.accountDefaultModel.value = account.defaultModel || "";
-  elements.accountConverter.value = account.converter || "none";
   elements.accountNote.value = account.note || "";
   elements.accountEnabled.checked = account.enabled;
-  syncAccountConverterOptions();
-  renderAccountSecretControls();
+}
+
+function toggleAccountApiKeyVisibility() {
+  const input = elements.accountApiKey;
+  if (!input) {
+    return;
+  }
+  setAccountApiKeyVisible(input.type === "password");
+}
+
+function setAccountApiKeyVisible(visible) {
+  const input = elements.accountApiKey;
+  const button = elements.accountKeyToggleView;
+  if (!input || !button) {
+    return;
+  }
+  if (visible) {
+    input.type = "text";
+    button.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 13.5L2.5 2.5"/><path d="M7 3.5C6 3.5 4.5 3.5 2 7.5C3.5 10 5.8 12 8 12C9.5 12 11.5 10.5 14 7.5C12.5 5 10.5 3.5 7 3.5z"/></svg>';
+    button.title = "Hide API key";
+    return;
+  }
+  input.type = "password";
+  button.innerHTML =
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s2.5-5 7-5 7 5 7 5-2.5 5-7 5-7-5-7-5z"/><circle cx="8" cy="8" r="2"/></svg>';
+  button.title = "Toggle API key visibility";
 }
 
 function buildAccountPayload() {
@@ -3350,7 +3128,6 @@ function buildAccountPayload() {
   const apiKey = normalizeOptional(elements.accountApiKey.value);
   const baseUrl = normalizeOptional(elements.accountBaseUrl.value);
   const defaultModel = normalizeOptional(elements.accountDefaultModel.value);
-  const converter = elements.accountConverter.value || "none";
   const note = normalizeOptional(elements.accountNote.value);
   const isEditing = Boolean(state.accountEditor);
 
@@ -3390,7 +3167,6 @@ function buildAccountPayload() {
     name,
     baseUrl,
     defaultModel,
-    converter,
     apiKey,
     note,
     enabled: elements.accountEnabled.checked,
@@ -3487,6 +3263,8 @@ function setActiveTab(tab) {
     void refreshMonitor(true);
   } else if (tab === "stats") {
     void refreshDailyStats(true);
+  } else if (tab === "settings") {
+    renderSettings();
   }
 }
 
@@ -3513,128 +3291,33 @@ function syncDaemonPanels() {
   elements.daemonLastError.textContent = daemon?.lastError || t("Unavailable");
 
   if (health) {
-    elements.vaultState.textContent = health.unlocked
-      ? t("Available")
-      : health.initialized
-        ? t("Locked")
-        : t("Not initialized");
-    elements.dbPath.textContent = health.dbPath;
-    elements.daemonPort.textContent = String(health.port);
-    elements.startedAt.textContent = formatDateTime(health.startedAt);
-    elements.detailStatus.textContent = health.unlocked
-      ? t("Daemon online")
-      : health.initialized
-        ? t("Vault locked")
-        : t("Setup required");
+    elements.detailStatus.textContent = t("Daemon online");
     renderProviderPathDemo();
     return;
   }
 
-  elements.vaultState.textContent = daemonRunning
-    ? t("Unavailable")
-    : t("Offline");
+  elements.detailStatus.textContent = daemonRunning
+    ? t("Process running but health endpoint unavailable")
+    : t("Daemon offline");
   elements.dbPath.textContent = t("Unavailable");
   elements.daemonPort.textContent = String(daemon?.port || DEFAULT_PORT);
   elements.startedAt.textContent = daemon?.startedAt
     ? formatDateTime(daemon.startedAt)
     : t("Unavailable");
-  elements.detailStatus.textContent = daemonRunning
-    ? t("Process running but health endpoint unavailable")
-    : t("Daemon offline");
   renderProviderPathDemo();
 }
 
-function isVaultEditorAvailable() {
-  return Boolean(state.health?.unlocked);
-}
-
-function requireVaultEditorAccess(action) {
-  if (isVaultEditorAvailable()) {
-    if (typeof action === "function") {
-      action();
-    }
-    return true;
-  }
-
-  if (state.health) {
-    if (typeof action === "function") {
-      pendingPostUnlockAction = action;
-    }
-    notify(
-      t(
-        "Unlock Vault before creating or editing providers, accounts, or routes.",
-      ),
-      "error",
-    );
-    openVaultDialog();
-    return false;
-  }
-
-  notify(
-    t("Wait for the daemon to come online, then unlock the vault."),
-    "error",
-  );
-  return false;
-}
-
 function renderChrome() {
-  elements.openProviderDialog.disabled = false;
-  elements.openAccountDialog.disabled = false;
-  elements.openRouteDialog.disabled = false;
-  if (!state.health) {
-    elements.vaultActionButton.disabled = true;
-    elements.vaultActionButton.textContent = state.daemonStatus?.running
-      ? t("Daemon Starting")
-      : t("Daemon Offline");
-    elements.vaultActionButton.dataset.mode = "waiting";
-    elements.vaultDialogTitle.textContent = state.daemonStatus?.running
-      ? t("Daemon Starting")
-      : t("Daemon Offline");
-    elements.vaultDialogCopy.textContent = state.daemonStatus?.running
-      ? t("Waiting for the local daemon health endpoint to come online.")
-      : t("Start or restart the daemon before unlocking the vault.");
-    elements.unlockSubmit.textContent = t("Unlock");
-    return;
-  }
-
-  elements.vaultActionButton.disabled = false;
-  const initialized = Boolean(state.health?.initialized);
-  const unlocked = Boolean(state.health?.unlocked);
-
-  if (unlocked) {
-    elements.vaultActionButton.textContent = t("Lock Vault");
-    elements.vaultActionButton.dataset.mode = "lock";
-    elements.vaultDialogTitle.textContent = t("Unlock Vault");
-    elements.vaultDialogCopy.textContent = t(
-      "The vault is already unlocked for this session. Use Lock Vault in the header to seal credentials again.",
-    );
-    elements.unlockSubmit.textContent = t("Unlock");
-    return;
-  }
-
-  elements.vaultActionButton.textContent = initialized
-    ? t("Unlock Vault")
-    : t("Initialize Vault");
-  elements.vaultActionButton.dataset.mode = "unlock";
-  elements.vaultDialogTitle.textContent = initialized
-    ? t("Unlock Vault")
-    : t("Initialize Vault");
-  elements.vaultDialogCopy.textContent = initialized
-    ? t(
-        "Enter the master password to unlock encrypted credentials for this local session.",
-      )
-    : t(
-        "Choose a master password to initialize the local encrypted vault on first use.",
-      );
-  elements.unlockSubmit.textContent = initialized
-    ? t("Unlock")
-    : t("Initialize");
+  elements.openProviderDialog.disabled = !state.health;
+  elements.openAccountDialog.disabled = !state.health;
+  elements.openRouteDialog.disabled = !state.health;
 }
 
 function renderSettings() {
   const settings = state.appSettings;
   const enabled = hasDesktopIntegration();
-  const daemonAvailable = Boolean(state.daemonStatus?.running);
+  const daemonAvailable =
+    Boolean(state.health) || Boolean(state.daemonStatus?.running);
   const savedPort = settings?.daemonPort || DEFAULT_PORT;
   const draftPort = Number(elements.settingsDaemonPort.value || savedPort);
   const currentPort =
@@ -3707,29 +3390,6 @@ function toggleDetailsPanel() {
 function closeDetailsPanel() {
   elements.detailsPanel.setAttribute("hidden", "");
   elements.detailsButton.setAttribute("aria-expanded", "false");
-}
-
-function openVaultDialog() {
-  renderChrome();
-  openDialog(elements.vaultDialog, elements.masterPassword);
-}
-
-function maybeAutoOpenVaultDialog() {
-  if (state.hasAutoPromptedVault) {
-    return;
-  }
-  if (!state.health || state.health.unlocked) {
-    return;
-  }
-  state.hasAutoPromptedVault = true;
-  openVaultDialog();
-}
-
-function closeVaultDialog(options = {}) {
-  if (!options.preservePendingAction) {
-    pendingPostUnlockAction = null;
-  }
-  closeDialog(elements.vaultDialog);
 }
 
 function closeProviderDialog() {
@@ -3825,20 +3485,6 @@ function protocolDisplayLabel(protocol) {
       return t("Generic HTTP");
     default:
       return protocol;
-  }
-}
-
-function converterDisplayLabel(converter) {
-  switch (converter) {
-    case "deepseek-v4-to-openai":
-      return t("DeepSeek V4 -> OpenAI");
-    case "none":
-    case "":
-    case null:
-    case undefined:
-      return t("No conversion");
-    default:
-      return converter;
   }
 }
 
@@ -3963,12 +3609,17 @@ function monitorDurationLabel(entry) {
     : t("live");
 }
 
-function buildFullLogClipboardText(log, fallbackProviderName, fallbackAccountName) {
+function buildFullLogClipboardText(
+  log,
+  fallbackProviderName,
+  fallbackAccountName,
+) {
   const provider = getProvider(log.provider);
   const account = state.accounts.find(
     (candidate) => candidate.id === log.accountId,
   );
-  const providerName = provider?.displayName || fallbackProviderName || log.provider;
+  const providerName =
+    provider?.displayName || fallbackProviderName || log.provider;
   const accountName =
     account?.name || log.accountId || fallbackAccountName || t("No account");
   const metadata = [
@@ -3979,7 +3630,6 @@ function buildFullLogClipboardText(log, fallbackProviderName, fallbackAccountNam
     ["account", accountName],
     ["accountId", log.accountId],
     ["upstreamUrl", log.upstreamUrl],
-    ["converter", log.converter],
     ["model", log.model || t("model unavailable")],
     ["method", log.method],
     ["path", log.path],
@@ -4121,7 +3771,10 @@ async function writeClipboardText(text) {
       await invokeDesktop("write_clipboard_text", { text });
       return;
     } catch (error) {
-      console.warn("Native clipboard copy failed; trying web clipboard.", error);
+      console.warn(
+        "Native clipboard copy failed; trying web clipboard.",
+        error,
+      );
     }
   }
 
@@ -4132,7 +3785,10 @@ async function writeClipboardText(text) {
       return;
     } catch (error) {
       clipboardError = error;
-      console.warn("Web clipboard copy failed; trying textarea fallback.", error);
+      console.warn(
+        "Web clipboard copy failed; trying textarea fallback.",
+        error,
+      );
     }
   }
 
@@ -4172,7 +3828,9 @@ async function copyMonitorEntry(entry, providerName, accountName) {
   }
   if (!logId) {
     notify(
-      t("Full log is still being written. Try again after the request completes."),
+      t(
+        "Full log is still being written. Try again after the request completes.",
+      ),
       "info",
     );
     return;
@@ -4235,7 +3893,9 @@ async function syncOnboardingGuideConfig(guide) {
     });
     notify(
       result?.defaultProviderUpdated === false
-        ? t("Codex config synced by updating the existing model_provider base_url.")
+        ? t(
+            "Codex config synced by updating the existing model_provider base_url.",
+          )
         : t("Codex config synced."),
       "success",
     );
@@ -4449,7 +4109,9 @@ function translateDomainError(message) {
     ? message.slice("validation error: ".length)
     : message;
 
-  let match = normalized.match(/^built-in provider `([^`]+)` cannot be deleted$/);
+  let match = normalized.match(
+    /^built-in provider `([^`]+)` cannot be deleted$/,
+  );
   if (match) {
     return t("Built-in provider {slug} cannot be deleted.", {
       slug: match[1],
@@ -4485,7 +4147,9 @@ function translateDomainError(message) {
     });
   }
 
-  match = normalized.match(/^account `([^`]+)` does not belong to provider `([^`]+)`$/);
+  match = normalized.match(
+    /^account `([^`]+)` does not belong to provider `([^`]+)`$/,
+  );
   if (match) {
     return t("Account {id} does not belong to provider {slug}.", {
       id: match[1],
@@ -4529,14 +4193,6 @@ function translateDomainError(message) {
     return t("Secret is missing for account {id}.", {
       id: match[1],
     });
-  }
-
-  if (normalized === "vault is not initialized") {
-    return t("Vault is not initialized.");
-  }
-
-  if (normalized === "master password must not be empty") {
-    return t("Master password must not be empty.");
   }
 
   if (normalized === "new accounts require an API key") {
@@ -4660,6 +4316,11 @@ function buildDailyStatsSeries(days) {
   return series;
 }
 
+function todayDailyStats() {
+  const key = formatLocalDay(new Date());
+  return state.dailyStats.find((point) => point.day === key) || null;
+}
+
 function todayLogQuery() {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -4717,7 +4378,8 @@ function aggregateTokenUsage(logs) {
       }
       aggregate.input += usage.input ?? 0;
       aggregate.output += usage.output ?? 0;
-      aggregate.total += usage.total ?? (usage.input ?? 0) + (usage.output ?? 0);
+      aggregate.total +=
+        usage.total ?? (usage.input ?? 0) + (usage.output ?? 0);
       return aggregate;
     },
     { input: 0, output: 0, total: 0 },
@@ -4794,8 +4456,7 @@ function extractTokenUsageFromPayload(payload) {
     const outputTokens = finiteNumber(usage.output_tokens);
     const totalTokens = finiteNumber(usage.total_tokens);
 
-    const cacheInput =
-      (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0);
+    const cacheInput = (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0);
     const deepseekInput =
       promptCacheHitTokens != null || promptCacheMissTokens != null
         ? (promptCacheHitTokens ?? 0) + (promptCacheMissTokens ?? 0)
@@ -4811,7 +4472,7 @@ function extractTokenUsageFromPayload(payload) {
     const total =
       input != null || output != null
         ? (input ?? 0) + (output ?? 0)
-        : totalTokens ?? null;
+        : (totalTokens ?? null);
 
     const normalized = normalizeTokenUsage({ input, output, total });
     if (hasTokenUsage(normalized)) {
@@ -4850,9 +4511,9 @@ function normalizeTokenUsage(usage) {
 function hasTokenUsage(usage) {
   return Boolean(
     usage &&
-      [usage.input, usage.output, usage.total].some(
-        (value) => typeof value === "number" && Number.isFinite(value),
-      ),
+    [usage.input, usage.output, usage.total].some(
+      (value) => typeof value === "number" && Number.isFinite(value),
+    ),
   );
 }
 
@@ -4875,7 +4536,14 @@ function formatSuccessRate(logs) {
   const successCount = logs.filter((log) =>
     isSuccessStatus(log.statusCode),
   ).length;
-  return `${Math.round((successCount / logs.length) * 100)}%`;
+  return formatSuccessRateFromCounts(logs.length, successCount);
+}
+
+function formatSuccessRateFromCounts(totalCount, successCount) {
+  if (!totalCount) {
+    return "--";
+  }
+  return `${Math.round((successCount / totalCount) * 100)}%`;
 }
 
 function formatLatency(value) {

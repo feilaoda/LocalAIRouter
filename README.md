@@ -186,6 +186,12 @@ http://127.0.0.1:16321
 LOCALAIROUTER_PORT=18000 cargo run -p localairouter-daemon
 ```
 
+桌面端同样会把该端口传给它拉起的 daemon：
+
+```bash
+LOCALAIROUTER_PORT=18000 cargo run -p localairouter
+```
+
 ## 常用运行设置
 
 ### 修改默认数据目录

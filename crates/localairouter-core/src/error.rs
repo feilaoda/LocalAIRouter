@@ -6,14 +6,10 @@ pub type Result<T> = std::result::Result<T, LocalAIRouterError>;
 pub enum LocalAIRouterError {
     #[error("validation error: {0}")]
     Validation(String),
-    #[error("vault is locked")]
-    Locked,
     #[error("resource not found: {0}")]
     NotFound(String),
     #[error("database error: {0}")]
     Sqlite(String),
-    #[error("crypto error: {0}")]
-    Crypto(String),
     #[error("io error: {0}")]
     Io(String),
     #[error("http error: {0}")]

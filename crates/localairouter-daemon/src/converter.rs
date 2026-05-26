@@ -95,10 +95,6 @@ impl ResponseStore {
         Ok(())
     }
 
-    pub fn clear(&self) {
-        self.entries.lock().expect("response store").clear();
-    }
-
     fn insert(&self, response_id: String, response: StoredResponse) {
         let mut entries = self.entries.lock().expect("response store");
         if let Some(index) = entries.iter().position(|(id, _)| id == &response_id) {

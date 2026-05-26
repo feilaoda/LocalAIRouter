@@ -125,8 +125,6 @@ pub struct HealthResponse {
     pub version: String,
     pub started_at: String,
     pub db_path: String,
-    pub initialized: bool,
-    pub unlocked: bool,
     pub port: u16,
 }
 
@@ -168,35 +166,8 @@ pub struct TokenRebuildReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UnlockRequest {
-    pub master_password: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RevealSecretRequest {
-    pub master_password: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnlockResponse {
-    pub initialized: bool,
-    pub unlocked: bool,
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DeleteResponse {
     pub success: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RevealedSecret {
-    pub account_id: String,
-    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,7 +181,8 @@ pub struct Account {
     pub converter: AccountConverter,
     pub enabled: bool,
     pub note: Option<String>,
-    pub has_secret: bool,
+    pub api_key_masked: Option<String>,
+    pub api_key: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

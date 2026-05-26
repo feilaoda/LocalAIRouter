@@ -3,7 +3,7 @@
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Component;
@@ -58,6 +58,7 @@ const LOCAL_ROUTER_MANAGED_SECRET: &str = "localairouter-managed";
 #[derive(Default)]
 struct DaemonRuntime {
     child: Option<Child>,
+    external_running: bool,
     pid: Option<u32>,
     started_at: Option<String>,
     launch_mode: Option<String>,
@@ -166,7 +167,24 @@ impl DaemonSupervisor {
             return self.snapshot_locked(&runtime);
         }
 
+        let port = configured_daemon_port();
         let log_file = daemon_log_file()?;
+        if daemon_health_available(port) {
+            runtime.external_running = true;
+            runtime.pid = None;
+            runtime.started_at = None;
+            runtime.launch_mode = Some("external".into());
+            runtime.command_path = None;
+            runtime.last_error = None;
+            runtime.last_exit = Some(format!("attached to existing daemon on port {port}"));
+            append_supervisor_event(
+                &log_file,
+                format!("desktop: attached to existing daemon on port {port}"),
+            )?;
+            return self.snapshot_locked(&runtime);
+        }
+
+        runtime.external_running = false;
         let (child, spec) = spawn_daemon_process(&log_file)?;
         let pid = child.id();
         runtime.child = Some(child);
@@ -195,6 +213,7 @@ impl DaemonSupervisor {
         } else {
             runtime.last_exit = Some("already stopped".into());
         }
+        runtime.external_running = false;
         runtime.pid = None;
         runtime.started_at = None;
         self.snapshot_locked(&runtime)
@@ -219,6 +238,10 @@ impl DaemonSupervisor {
 
     fn sync_locked(&self, runtime: &mut DaemonRuntime) {
         let Some(child) = runtime.child.as_mut() else {
+            if runtime.external_running && !daemon_health_available(configured_daemon_port()) {
+                runtime.external_running = false;
+                runtime.last_exit = Some("external daemon disappeared".into());
+            }
             return;
         };
         match child.try_wait() {
@@ -230,6 +253,7 @@ impl DaemonSupervisor {
                 runtime.pid = None;
                 runtime.started_at = None;
                 runtime.child = None;
+                runtime.external_running = false;
             }
             Ok(None) => {
                 runtime.pid = Some(child.id());
@@ -241,9 +265,12 @@ impl DaemonSupervisor {
     }
 
     fn snapshot_locked(&self, runtime: &DaemonRuntime) -> Result<DaemonStatus> {
+        let port = configured_daemon_port();
         Ok(DaemonStatus {
-            running: runtime.child.is_some(),
-            port: configured_daemon_port(),
+            running: runtime.child.is_some()
+                || runtime.external_running
+                || daemon_health_available(port),
+            port,
             pid: runtime.pid,
             started_at: runtime.started_at.clone(),
             launch_mode: runtime.launch_mode.clone(),
@@ -263,6 +290,10 @@ fn main() {
         .with_target(false)
         .compact()
         .init();
+
+    if let Err(error) = persist_startup_env_settings_overrides() {
+        warn!("failed to persist startup env settings overrides: {error:#}");
+    }
 
     let supervisor = DaemonSupervisor::new();
     let locale_state = LocaleState::new();
@@ -422,9 +453,23 @@ fn get_app_settings() -> std::result::Result<AppSettings, String> {
 }
 
 #[tauri::command]
-fn save_app_settings_command(input: AppSettingsInput) -> std::result::Result<AppSettings, String> {
+fn save_app_settings_command(
+    supervisor: tauri::State<'_, DaemonSupervisor>,
+    input: AppSettingsInput,
+) -> std::result::Result<AppSettings, String> {
     let paths = AppPaths::discover().map_err(|error| error.to_string())?;
-    save_app_settings(&paths, &input).map_err(|error| error.to_string())
+    let previous = load_app_settings(&paths).map_err(|error| error.to_string())?;
+    let was_running = supervisor
+        .status()
+        .map(|status| status.running)
+        .unwrap_or(false);
+    let saved = save_app_settings(&paths, &input).map_err(|error| error.to_string())?;
+    let restart_required = previous.daemon_port != saved.daemon_port
+        || previous.allow_lan_access != saved.allow_lan_access;
+    if was_running && restart_required {
+        supervisor.restart().map_err(|error| error.to_string())?;
+    }
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -550,33 +595,84 @@ fn configure_child(command: &mut Command, log_file: &Path) -> Result<()> {
 }
 
 fn configured_daemon_port() -> u16 {
-    let settings_port = AppPaths::discover()
+    AppPaths::discover()
         .ok()
         .and_then(|paths| load_app_settings(&paths).ok())
         .map(|settings| settings.daemon_port)
-        .unwrap_or(DEFAULT_DAEMON_PORT);
-    configured_port(
-        &[
-            DAEMON_PORT_ENV,
-            LEGACY_DAEMON_PORT_ENV,
-            OLDER_DAEMON_PORT_ENV,
-        ],
-        settings_port,
-    )
+        .or_else(|| {
+            parse_port_env_list(&[
+                DAEMON_PORT_ENV,
+                LEGACY_DAEMON_PORT_ENV,
+                OLDER_DAEMON_PORT_ENV,
+            ])
+        })
+        .unwrap_or(DEFAULT_DAEMON_PORT)
+}
+
+fn daemon_health_available(port: u16) -> bool {
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(250)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
+    if stream
+        .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut buffer = [0_u8; 64];
+    match stream.read(&mut buffer) {
+        Ok(count) if count > 0 => {
+            let response = String::from_utf8_lossy(&buffer[..count]);
+            response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
+        }
+        _ => false,
+    }
 }
 
 fn configured_allow_lan_access() -> bool {
-    let settings_allow_lan = AppPaths::discover()
+    AppPaths::discover()
         .ok()
         .and_then(|paths| load_app_settings(&paths).ok())
         .map(|settings| settings.allow_lan_access)
-        .unwrap_or(false);
-    parse_bool_env_list(&[
+        .or_else(|| {
+            parse_bool_env_list(&[
+                DAEMON_ALLOW_LAN_ENV,
+                LEGACY_DAEMON_ALLOW_LAN_ENV,
+                OLDER_DAEMON_ALLOW_LAN_ENV,
+            ])
+        })
+        .unwrap_or(false)
+}
+
+fn persist_startup_env_settings_overrides() -> Result<()> {
+    let env_port = parse_port_env_list(&[
+        DAEMON_PORT_ENV,
+        LEGACY_DAEMON_PORT_ENV,
+        OLDER_DAEMON_PORT_ENV,
+    ]);
+    let env_allow_lan = parse_bool_env_list(&[
         DAEMON_ALLOW_LAN_ENV,
         LEGACY_DAEMON_ALLOW_LAN_ENV,
         OLDER_DAEMON_ALLOW_LAN_ENV,
-    ])
-    .unwrap_or(settings_allow_lan)
+    ]);
+    if env_port.is_none() && env_allow_lan.is_none() {
+        return Ok(());
+    }
+
+    let paths = AppPaths::discover()?;
+    let current = load_app_settings(&paths)?;
+    let input = AppSettingsInput {
+        daemon_port: env_port.unwrap_or(current.daemon_port),
+        allow_lan_access: env_allow_lan.unwrap_or(current.allow_lan_access),
+        monitor_buffer_limit: current.monitor_buffer_limit,
+        log_retention_days: current.log_retention_days,
+        logs_dir: Some(current.logs_dir),
+    };
+    save_app_settings(&paths, &input)?;
+    Ok(())
 }
 
 fn detect_primary_lan_ip() -> Option<IpAddr> {
@@ -1799,10 +1895,6 @@ fn build_workspace_daemon_binary(manifest: &Path) -> Result<PathBuf> {
         ));
     }
     workspace_daemon_binary().context("built daemon binary not found in target directory")
-}
-
-fn configured_port(names: &[&str], default_port: u16) -> u16 {
-    parse_port_env_list(names).unwrap_or(default_port)
 }
 
 fn parse_port_env(name: &str) -> Option<u16> {

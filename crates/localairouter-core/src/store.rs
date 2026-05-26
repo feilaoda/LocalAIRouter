@@ -1,29 +1,28 @@
 use chrono::{Duration, NaiveDate, Utc};
+use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
+use ring::pbkdf2;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::crypto;
 use crate::error::{LocalAIRouterError, Result};
 use crate::models::{
     Account, AccountConverter, AccountInput, ApiProtocol, AppSettings, AppSettingsInput,
     DEFAULT_LOG_RETENTION_DAYS, DEFAULT_MONITOR_BUFFER_LIMIT, DailyStatsPoint, DailyStatsQuery,
     DeleteResponse, HealthResponse, LogQuery, ProviderDefinition, ProviderInput, RequestLog,
-    RequestLogInput, ResolvedAccount, RevealedSecret, RouteBinding, RouteBindingInput,
-    TokenRebuildReport, UnlockResponse, extract_session_id, extract_total_tokens,
+    RequestLogInput, ResolvedAccount, RouteBinding, RouteBindingInput, TokenRebuildReport,
+    extract_session_id, extract_total_tokens,
 };
 use crate::onboarding::{DEFAULT_PORT, guide_for_target};
 use crate::sqlite::{Connection, Row, SqlValue};
 
-const VAULT_SALT_KEY: &str = "vault_salt";
-const VAULT_CHECK_NONCE_KEY: &str = "vault_check_nonce";
-const VAULT_CHECK_CIPHERTEXT_KEY: &str = "vault_check_ciphertext";
 const APP_SETTING_DAEMON_PORT_KEY: &str = "daemon_port";
 const APP_SETTING_ALLOW_LAN_ACCESS_KEY: &str = "allow_lan_access";
 const APP_SETTING_MONITOR_BUFFER_LIMIT_KEY: &str = "monitor_buffer_limit";
@@ -31,6 +30,14 @@ const APP_SETTING_LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 const APP_SETTING_LOGS_DIR_KEY: &str = "logs_dir";
 const APP_SETTING_TOTAL_TOKENS_VERSION_KEY: &str = "total_tokens_version";
 const CURRENT_TOTAL_TOKENS_VERSION: &str = "5";
+const LEGACY_CREDENTIAL_PASSWORD_ENV: &str = "LOCALAIROUTER_LEGACY_CREDENTIAL_PASSWORD";
+const LEGACY_CREDENTIAL_SALT_KEY: &str = "vault_salt";
+const LEGACY_CREDENTIAL_CHECK_NONCE_KEY: &str = "vault_check_nonce";
+const LEGACY_CREDENTIAL_CHECK_CIPHERTEXT_KEY: &str = "vault_check_ciphertext";
+const LEGACY_CREDENTIAL_CHECK: &[u8] = b"localairouter-master-key-v1";
+const LEGACY_OPENROUTER_CREDENTIAL_CHECK: &[u8] = b"localopenrouter-master-key-v1";
+const LEGACY_ROUTER_CREDENTIAL_CHECK: &[u8] = b"localrouter-master-key-v1";
+const LEGACY_PBKDF2_ITERATIONS: u32 = 180_000;
 const DATA_DIR_ENV: &str = "LOCALAIROUTER_DATA_DIR";
 const LEGACY_DATA_DIR_ENV: &str = "LOCALOPENROUTER_DATA_DIR";
 const OLDER_DATA_DIR_ENV: &str = "LOCALROUTER_DATA_DIR";
@@ -200,7 +207,6 @@ fn database_path_for_root(root: &Path) -> PathBuf {
 pub struct Repository {
     paths: AppPaths,
     db: Mutex<Connection>,
-    master_key: RwLock<Option<[u8; 32]>>,
     last_log_prune_day: Mutex<Option<String>>,
     started_at: String,
     port: u16,
@@ -220,7 +226,6 @@ impl Repository {
         let repository = Self {
             paths,
             db: Mutex::new(database),
-            master_key: RwLock::new(None),
             last_log_prune_day: Mutex::new(None),
             started_at: timestamp(),
             port: if port == 0 { DEFAULT_PORT } else { port },
@@ -234,8 +239,6 @@ impl Repository {
             version: env!("CARGO_PKG_VERSION").into(),
             started_at: self.started_at.clone(),
             db_path: self.paths.database.to_string_lossy().into_owned(),
-            initialized: self.is_initialized().await?,
-            unlocked: self.master_key.read().await.is_some(),
             port: self.port,
         })
     }
@@ -248,65 +251,6 @@ impl Repository {
     pub async fn update_app_settings(&self, input: AppSettingsInput) -> Result<AppSettings> {
         let db = self.db.lock().await;
         save_app_settings_with_db(&db, &self.paths, &input)
-    }
-
-    pub async fn is_initialized(&self) -> Result<bool> {
-        let db = self.db.lock().await;
-        let salt = get_setting_blob(&db, VAULT_SALT_KEY)?;
-        Ok(salt.is_some())
-    }
-
-    pub async fn unlock(&self, password: &str) -> Result<UnlockResponse> {
-        if password.trim().is_empty() {
-            return Err(LocalAIRouterError::Validation(
-                "master password must not be empty".into(),
-            ));
-        }
-
-        let mut key_guard = self.master_key.write().await;
-        let db = self.db.lock().await;
-        let salt = get_setting_blob(&db, VAULT_SALT_KEY)?;
-        let check_nonce = get_setting_blob(&db, VAULT_CHECK_NONCE_KEY)?;
-        let check_ciphertext = get_setting_blob(&db, VAULT_CHECK_CIPHERTEXT_KEY)?;
-
-        let response = match (salt, check_nonce, check_ciphertext) {
-            (Some(_), Some(_), Some(_)) => {
-                let key = master_key_from_password(&db, password)?;
-                *key_guard = Some(key);
-                UnlockResponse {
-                    initialized: true,
-                    unlocked: true,
-                    message: "vault unlocked".into(),
-                }
-            }
-            (None, None, None) => {
-                let initialized = crypto::initialize_master_password(password)?;
-                upsert_setting_blob(&db, VAULT_SALT_KEY, &initialized.salt)?;
-                upsert_setting_blob(&db, VAULT_CHECK_NONCE_KEY, &initialized.check_nonce)?;
-                upsert_setting_blob(
-                    &db,
-                    VAULT_CHECK_CIPHERTEXT_KEY,
-                    &initialized.check_ciphertext,
-                )?;
-                *key_guard = Some(initialized.key);
-                UnlockResponse {
-                    initialized: true,
-                    unlocked: true,
-                    message: "vault initialized and unlocked".into(),
-                }
-            }
-            _ => {
-                return Err(LocalAIRouterError::Sqlite(
-                    "vault metadata is incomplete; delete the database to recover".into(),
-                ));
-            }
-        };
-        Ok(response)
-    }
-
-    pub async fn lock(&self) {
-        let mut key_guard = self.master_key.write().await;
-        *key_guard = None;
     }
 
     pub async fn list_providers(&self) -> Result<Vec<ProviderDefinition>> {
@@ -460,7 +404,7 @@ impl Repository {
         let db = self.db.lock().await;
         let rows = db.query(
             "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
-             EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
+             a.api_key,
              a.created_at, a.updated_at
              FROM accounts a ORDER BY a.provider, a.name",
             &[],
@@ -470,7 +414,7 @@ impl Repository {
 
     pub async fn upsert_account(&self, input: AccountInput) -> Result<Account> {
         validate_account_input(&input)?;
-        let key = self.require_master_key().await?;
+
         let provider_slug = normalize_slug(&input.provider)?;
         let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let now = timestamp();
@@ -542,19 +486,11 @@ impl Repository {
                         "API key must not be empty when provided".into(),
                     ));
                 }
-                let (nonce, ciphertext) = crypto::encrypt_secret(&key, api_key)?;
                 db.execute(
-                    "INSERT INTO encrypted_secrets (account_id, nonce, ciphertext, updated_at)
-                     VALUES (?, ?, ?, ?)
-                     ON CONFLICT(account_id) DO UPDATE SET
-                       nonce = excluded.nonce,
-                       ciphertext = excluded.ciphertext,
-                       updated_at = excluded.updated_at",
+                    "UPDATE accounts SET api_key = ? WHERE id = ?",
                     &[
+                        SqlValue::Text(api_key.to_owned()),
                         SqlValue::Text(id.clone()),
-                        SqlValue::Blob(nonce),
-                        SqlValue::Blob(ciphertext),
-                        SqlValue::Text(now.clone()),
                     ],
                 )?;
             }
@@ -571,41 +507,12 @@ impl Repository {
         self.get_account(&id).await
     }
 
-    pub async fn reveal_account_secret(
-        &self,
-        account_id: &str,
-        password: &str,
-    ) -> Result<RevealedSecret> {
-        if password.trim().is_empty() {
-            return Err(LocalAIRouterError::Validation(
-                "master password must not be empty".into(),
-            ));
-        }
-
-        let db = self.db.lock().await;
-        let row = db
-            .query(
-                "SELECT id FROM accounts WHERE id = ?",
-                &[SqlValue::Text(account_id.into())],
-            )?
-            .into_iter()
-            .next()
-            .ok_or_else(|| LocalAIRouterError::NotFound(format!("account `{account_id}`")))?;
-        let account_id = row.get_text("id")?;
-        let key = master_key_from_password(&db, password)?;
-        let api_key = decrypt_account_secret(&db, &account_id, &key)?;
-        Ok(RevealedSecret {
-            account_id,
-            api_key,
-        })
-    }
-
     pub async fn get_account(&self, id: &str) -> Result<Account> {
         let db = self.db.lock().await;
         let row = db
             .query(
                 "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
-                 EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
+                 a.api_key,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
                 &[SqlValue::Text(id.into())],
@@ -632,10 +539,7 @@ impl Repository {
             "DELETE FROM route_bindings WHERE account_id = ?",
             &[SqlValue::Text(id.into())],
         )?;
-        db.execute(
-            "DELETE FROM encrypted_secrets WHERE account_id = ?",
-            &[SqlValue::Text(id.into())],
-        )?;
+
         db.execute(
             "DELETE FROM accounts WHERE id = ?",
             &[SqlValue::Text(id.into())],
@@ -932,7 +836,6 @@ impl Repository {
         provider_slug: &str,
         model: Option<&str>,
     ) -> Result<ResolvedAccount> {
-        let key = self.require_master_key().await?;
         let db = self.db.lock().await;
         let provider = fetch_provider_by_slug(&db, provider_slug)?
             .ok_or_else(|| LocalAIRouterError::NotFound(format!("provider `{provider_slug}`")))?;
@@ -951,7 +854,7 @@ impl Repository {
         let account = db
             .query(
                 "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
-                 EXISTS(SELECT 1 FROM encrypted_secrets s WHERE s.account_id = a.id) AS has_secret,
+                 a.api_key,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
                 &[SqlValue::Text(selected.account_id.clone())],
@@ -971,7 +874,15 @@ impl Repository {
                 account.name
             )));
         }
-        let api_key = decrypt_account_secret(&db, &account.id, &key)?;
+        let api_key_row = db.query(
+            "SELECT api_key FROM accounts WHERE id = ?",
+            &[SqlValue::Text(account.id.clone())],
+        )?;
+        let api_key = api_key_row
+            .into_iter()
+            .next()
+            .and_then(|row| row.get_optional_text("api_key").ok().flatten())
+            .unwrap_or_default();
         Ok(ResolvedAccount {
             upstream_base_url: account
                 .base_url
@@ -995,15 +906,6 @@ impl Repository {
         };
         let provider = self.get_provider(provider_slug).await?;
         guide_for_target(target, self.port, &provider)
-    }
-
-    async fn require_master_key(&self) -> Result<[u8; 32]> {
-        self.master_key
-            .read()
-            .await
-            .as_ref()
-            .copied()
-            .ok_or(LocalAIRouterError::Locked)
     }
 }
 
@@ -1181,11 +1083,14 @@ fn provider_from_row(row: Row) -> Result<ProviderDefinition> {
 }
 
 fn account_from_row(row: Row) -> Result<Account> {
+    let api_key = row.get_optional_text("api_key").ok().flatten();
     Ok(Account {
         id: row.get_text("id")?,
         provider: row.get_text("provider")?,
         name: row.get_text("name")?,
         base_url: normalize_optional(row.get_optional_text("base_url")?),
+        api_key_masked: api_key.as_deref().map(mask_api_key),
+        api_key,
         default_model: normalize_optional(row.get_optional_text("default_model")?),
         converter: row
             .get_optional_text("converter")?
@@ -1194,7 +1099,6 @@ fn account_from_row(row: Row) -> Result<Account> {
             .parse()?,
         enabled: row.get_i64("enabled")? != 0,
         note: row.get_optional_text("note")?,
-        has_secret: row.get_i64("has_secret")? != 0,
         created_at: row.get_text("created_at")?,
         updated_at: row.get_text("updated_at")?,
     })
@@ -1425,6 +1329,8 @@ impl StoredLogRecord {
 }
 
 fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
+    ensure_column(db, "accounts", "api_key", "TEXT")?;
+    migrate_legacy_encrypted_credentials(db)?;
     ensure_column(db, "providers", "default_model", "TEXT")?;
     ensure_column(db, "accounts", "base_url", "TEXT")?;
     ensure_column(db, "accounts", "default_model", "TEXT")?;
@@ -1448,6 +1354,114 @@ fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
     retire_legacy_builtin_custom_provider(db)?;
     migrate_request_logs(db, root)?;
     Ok(())
+}
+
+fn migrate_legacy_encrypted_credentials(db: &Connection) -> Result<()> {
+    let source_table = if table_exists(db, "encrypted_secrets")? {
+        "encrypted_secrets"
+    } else if table_exists(db, "legacy_encrypted_secrets")? {
+        "legacy_encrypted_secrets"
+    } else {
+        return Ok(());
+    };
+    let Some(password) = env::var(LEGACY_CREDENTIAL_PASSWORD_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return retire_encrypted_secrets_table(db);
+    };
+
+    let key = legacy_credential_key_from_password(db, &password)?;
+    let sql = format!("SELECT account_id, nonce, ciphertext FROM {source_table}");
+    let rows = db.query(&sql, &[])?;
+    for row in rows {
+        let account_id = row.get_text("account_id")?;
+        let api_key =
+            legacy_decrypt_credential(&key, &row.get_blob("nonce")?, &row.get_blob("ciphertext")?)?;
+        db.execute(
+            "UPDATE accounts SET api_key = ? WHERE id = ? AND (api_key IS NULL OR api_key = '')",
+            &[SqlValue::Text(api_key), SqlValue::Text(account_id)],
+        )?;
+    }
+    if table_exists(db, "encrypted_secrets")? {
+        db.execute_batch("DROP TABLE encrypted_secrets;")?;
+    }
+    if table_exists(db, "legacy_encrypted_secrets")? {
+        db.execute_batch("DROP TABLE legacy_encrypted_secrets;")?;
+    }
+    Ok(())
+}
+
+fn retire_encrypted_secrets_table(db: &Connection) -> Result<()> {
+    if !table_exists(db, "encrypted_secrets")? {
+        return Ok(());
+    }
+    if table_exists(db, "legacy_encrypted_secrets")? {
+        db.execute_batch("DROP TABLE encrypted_secrets;")?;
+        return Ok(());
+    }
+    db.execute_batch("ALTER TABLE encrypted_secrets RENAME TO legacy_encrypted_secrets;")
+}
+
+fn legacy_credential_key_from_password(db: &Connection, password: &str) -> Result<[u8; 32]> {
+    let salt = get_setting_blob(db, LEGACY_CREDENTIAL_SALT_KEY)?.ok_or_else(|| {
+        LocalAIRouterError::Validation("legacy credential metadata is missing".into())
+    })?;
+    let check_nonce =
+        get_setting_blob(db, LEGACY_CREDENTIAL_CHECK_NONCE_KEY)?.ok_or_else(|| {
+            LocalAIRouterError::Validation("legacy credential metadata is missing".into())
+        })?;
+    let check_ciphertext = get_setting_blob(db, LEGACY_CREDENTIAL_CHECK_CIPHERTEXT_KEY)?
+        .ok_or_else(|| {
+            LocalAIRouterError::Validation("legacy credential metadata is missing".into())
+        })?;
+    let iterations = NonZeroU32::new(LEGACY_PBKDF2_ITERATIONS).ok_or_else(|| {
+        LocalAIRouterError::Message("invalid legacy credential iteration count".into())
+    })?;
+    let mut key = [0_u8; 32];
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        iterations,
+        &salt,
+        password.as_bytes(),
+        &mut key,
+    );
+    let check = legacy_decrypt_bytes(&key, &check_nonce, &check_ciphertext)?;
+    if check != LEGACY_CREDENTIAL_CHECK
+        && check != LEGACY_OPENROUTER_CREDENTIAL_CHECK
+        && check != LEGACY_ROUTER_CREDENTIAL_CHECK
+    {
+        return Err(LocalAIRouterError::Validation(
+            "legacy credential password is invalid".into(),
+        ));
+    }
+    Ok(key)
+}
+
+fn legacy_decrypt_credential(key: &[u8; 32], nonce: &[u8], ciphertext: &[u8]) -> Result<String> {
+    let plaintext = legacy_decrypt_bytes(key, nonce, ciphertext)?;
+    String::from_utf8(plaintext)
+        .map_err(|_| LocalAIRouterError::Validation("legacy credential is not utf-8".into()))
+}
+
+fn legacy_decrypt_bytes(key: &[u8; 32], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
+    let key = LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key).map_err(|_| {
+        LocalAIRouterError::Message("failed to initialize legacy credential cipher".into())
+    })?);
+    let mut in_out = ciphertext.to_vec();
+    let plaintext = key
+        .open_in_place(
+            Nonce::assume_unique_for_key(nonce.try_into().map_err(|_| {
+                LocalAIRouterError::Validation("invalid legacy credential nonce length".into())
+            })?),
+            Aad::empty(),
+            &mut in_out,
+        )
+        .map_err(|_| {
+            LocalAIRouterError::Validation("failed to decrypt legacy credential".into())
+        })?;
+    Ok(plaintext.to_vec())
 }
 
 fn ensure_column(db: &Connection, table: &str, column: &str, definition: &str) -> Result<bool> {
@@ -2270,6 +2284,18 @@ fn get_setting_text(db: &Connection, key: &str) -> Result<Option<String>> {
         .flatten())
 }
 
+fn get_setting_blob(db: &Connection, key: &str) -> Result<Option<Vec<u8>>> {
+    Ok(db
+        .query(
+            "SELECT value_blob FROM app_settings WHERE key = ?",
+            &[SqlValue::Text(key.into())],
+        )?
+        .into_iter()
+        .next()
+        .map(|row| row.get_blob("value_blob"))
+        .transpose()?)
+}
+
 fn upsert_setting_text(db: &Connection, key: &str, value: &str) -> Result<()> {
     db.execute(
         "INSERT INTO app_settings (key, value_text, value_blob, updated_at)
@@ -2301,69 +2327,6 @@ fn table_exists(db: &Connection, table: &str) -> Result<bool> {
             &[SqlValue::Text(table.into())],
         )?
         .is_empty())
-}
-
-fn get_setting_blob(db: &Connection, key: &str) -> Result<Option<Vec<u8>>> {
-    Ok(db
-        .query(
-            "SELECT value_blob FROM app_settings WHERE key = ?",
-            &[SqlValue::Text(key.into())],
-        )?
-        .into_iter()
-        .next()
-        .map(|row| row.get_blob("value_blob"))
-        .transpose()?)
-}
-
-fn upsert_setting_blob(db: &Connection, key: &str, value: &[u8]) -> Result<()> {
-    db.execute(
-        "INSERT INTO app_settings (key, value_text, value_blob, updated_at)
-         VALUES (?, NULL, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET
-           value_blob = excluded.value_blob,
-           updated_at = excluded.updated_at",
-        &[
-            SqlValue::Text(key.into()),
-            SqlValue::Blob(value.to_vec()),
-            SqlValue::Text(timestamp()),
-        ],
-    )
-}
-
-fn master_key_from_password(db: &Connection, password: &str) -> Result<[u8; 32]> {
-    let salt = get_setting_blob(db, VAULT_SALT_KEY)?;
-    let check_nonce = get_setting_blob(db, VAULT_CHECK_NONCE_KEY)?;
-    let check_ciphertext = get_setting_blob(db, VAULT_CHECK_CIPHERTEXT_KEY)?;
-
-    match (salt, check_nonce, check_ciphertext) {
-        (Some(salt), Some(check_nonce), Some(check_ciphertext)) => {
-            crypto::unlock_master_password(password, &salt, &check_nonce, &check_ciphertext)
-        }
-        (None, None, None) => Err(LocalAIRouterError::Validation(
-            "vault is not initialized".into(),
-        )),
-        _ => Err(LocalAIRouterError::Sqlite(
-            "vault metadata is incomplete; delete the database to recover".into(),
-        )),
-    }
-}
-
-fn decrypt_account_secret(db: &Connection, account_id: &str, key: &[u8; 32]) -> Result<String> {
-    let secret = db
-        .query(
-            "SELECT nonce, ciphertext FROM encrypted_secrets WHERE account_id = ?",
-            &[SqlValue::Text(account_id.into())],
-        )?
-        .into_iter()
-        .next()
-        .ok_or_else(|| {
-            LocalAIRouterError::NotFound(format!("secret missing for account `{account_id}`"))
-        })?;
-    crypto::decrypt_secret(
-        key,
-        &secret.get_blob("nonce")?,
-        &secret.get_blob("ciphertext")?,
-    )
 }
 
 fn normalize_optional(value: Option<String>) -> Option<String> {
@@ -2465,6 +2428,13 @@ fn normalize_header_name(value: &str) -> Result<String> {
     Ok(normalized.to_owned())
 }
 
+fn mask_api_key(key: &str) -> String {
+    if key.len() <= 8 {
+        return "****".to_string();
+    }
+    format!("{}...{}", &key[..4], &key[key.len() - 4..])
+}
+
 fn timestamp() -> String {
     Utc::now().to_rfc3339()
 }
@@ -2499,14 +2469,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   converter TEXT NOT NULL DEFAULT 'none',
   enabled INTEGER NOT NULL,
   note TEXT,
+  api_key TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS encrypted_secrets (
-  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-  nonce BLOB NOT NULL,
-  ciphertext BLOB NOT NULL,
   updated_at TEXT NOT NULL
 );
 
@@ -2620,14 +2584,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   converter TEXT NOT NULL DEFAULT 'none',
   enabled INTEGER NOT NULL,
   note TEXT,
+  api_key TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS encrypted_secrets (
-  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
-  nonce BLOB NOT NULL,
-  ciphertext BLOB NOT NULL,
   updated_at TEXT NOT NULL
 );
 
@@ -2820,7 +2778,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     #[tokio::test]
     async fn route_precedence_prefers_model_match() {
         let repo = repo().await;
-        repo.unlock("password").await.unwrap();
         let codex = repo
             .upsert_account(AccountInput {
                 id: None,
@@ -2871,7 +2828,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     #[tokio::test]
     async fn set_route_binding_replaces_legacy_default_route_rows() {
         let repo = repo().await;
-        repo.unlock("password").await.unwrap();
         let primary = repo
             .upsert_account(AccountInput {
                 id: None,
@@ -2945,7 +2901,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     #[tokio::test]
     async fn custom_provider_can_be_created_and_resolved() {
         let repo = repo().await;
-        repo.unlock("password").await.unwrap();
         let provider = repo
             .upsert_provider(ProviderInput {
                 slug: "openrouter".into(),
@@ -2990,7 +2945,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     #[tokio::test]
     async fn account_base_url_override_wins_over_provider_base_url() {
         let repo = repo().await;
-        repo.unlock("password").await.unwrap();
         let provider = repo
             .upsert_provider(ProviderInput {
                 slug: "openrouter".into(),
@@ -3038,7 +2992,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     #[tokio::test]
     async fn account_default_model_is_persisted_and_resolved() {
         let repo = repo().await;
-        repo.unlock("password").await.unwrap();
         let account = repo
             .upsert_account(AccountInput {
                 id: None,
@@ -3069,7 +3022,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
     #[tokio::test]
     async fn account_converter_is_persisted_and_protocol_guarded() {
         let repo = repo().await;
-        repo.unlock("password").await.unwrap();
         let account = repo
             .upsert_account(AccountInput {
                 id: None,
@@ -3104,47 +3056,6 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             .await
             .unwrap_err();
         assert!(rejected.to_string().contains("OpenAI protocol providers"));
-    }
-
-    #[tokio::test]
-    async fn reveal_account_secret_requires_password_without_unlocking_vault() {
-        let repo = repo().await;
-        repo.unlock("password").await.unwrap();
-        let account = repo
-            .upsert_account(AccountInput {
-                id: None,
-                provider: "codex".into(),
-                name: "Primary".into(),
-                base_url: None,
-                default_model: None,
-                converter: AccountConverter::None,
-                api_key: Some("sk-primary".into()),
-                note: None,
-                enabled: true,
-            })
-            .await
-            .unwrap();
-
-        repo.lock().await;
-        assert!(!repo.health().await.unwrap().unlocked);
-
-        let revealed = repo
-            .reveal_account_secret(&account.id, "password")
-            .await
-            .unwrap();
-        assert_eq!(revealed.account_id, account.id);
-        assert_eq!(revealed.api_key, "sk-primary");
-        assert!(!repo.health().await.unwrap().unlocked);
-
-        let error = repo
-            .reveal_account_secret(&account.id, "wrong-password")
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "crypto error: master password is invalid"
-        );
-        assert!(!repo.health().await.unwrap().unlocked);
     }
 
     #[tokio::test]
