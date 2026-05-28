@@ -6,6 +6,7 @@ use crate::error::{LocalAIRouterError, Result};
 
 pub const DEFAULT_MONITOR_BUFFER_LIMIT: u32 = 200;
 pub const DEFAULT_LOG_RETENTION_DAYS: u32 = 30;
+pub const DAEMON_API_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ApiProtocol {
@@ -123,6 +124,8 @@ pub struct ProviderInput {
 #[serde(rename_all = "camelCase")]
 pub struct HealthResponse {
     pub version: String,
+    #[serde(default)]
+    pub api_version: u32,
     pub started_at: String,
     pub db_path: String,
     pub port: u16,

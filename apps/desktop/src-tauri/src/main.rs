@@ -17,10 +17,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use chrono::Utc;
 use localairouter_core::{
-    AccountConverter, AccountInput, AppPaths, AppSettings, AppSettingsInput, Repository,
-    RouteBindingInput, load_app_settings, save_app_settings,
+    AccountConverter, AccountInput, AppPaths, AppSettings, AppSettingsInput, DAEMON_API_VERSION,
+    Repository, RouteBindingInput, load_app_settings, save_app_settings,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tauri::menu::{MenuBuilder, MenuEvent, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
@@ -84,6 +84,13 @@ struct DaemonStatus {
     log_file_path: String,
     last_error: Option<String>,
     last_exit: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DaemonHealthProbe {
+    #[serde(default)]
+    api_version: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,19 +176,35 @@ impl DaemonSupervisor {
 
         let port = configured_daemon_port();
         let log_file = daemon_log_file()?;
-        if daemon_health_available(port) {
-            runtime.external_running = true;
-            runtime.pid = None;
-            runtime.started_at = None;
-            runtime.launch_mode = Some("external".into());
-            runtime.command_path = None;
-            runtime.last_error = None;
-            runtime.last_exit = Some(format!("attached to existing daemon on port {port}"));
+        if let Some(health) = daemon_health_probe(port) {
+            if daemon_health_is_compatible(&health) {
+                runtime.external_running = true;
+                runtime.pid = None;
+                runtime.started_at = None;
+                runtime.launch_mode = Some("external".into());
+                runtime.command_path = None;
+                runtime.last_error = None;
+                runtime.last_exit = Some(format!("attached to existing daemon on port {port}"));
+                append_supervisor_event(
+                    &log_file,
+                    format!("desktop: attached to existing daemon on port {port}"),
+                )?;
+                return self.snapshot_locked(&runtime);
+            }
+
             append_supervisor_event(
                 &log_file,
-                format!("desktop: attached to existing daemon on port {port}"),
+                format!(
+                    "desktop: incompatible daemon on port {port} (api version {}), trying to replace it",
+                    health.api_version
+                ),
             )?;
-            return self.snapshot_locked(&runtime);
+            if !terminate_external_daemon_on_port(port, &log_file)? {
+                anyhow::bail!(
+                    "incompatible daemon is already listening on port {port}; quit the old LocalAIRouter process or restart the daemon"
+                );
+            }
+            wait_for_daemon_shutdown(port, Duration::from_secs(5), Duration::from_millis(100));
         }
 
         runtime.external_running = false;
@@ -195,7 +218,7 @@ impl DaemonSupervisor {
         runtime.last_error = None;
         runtime.last_exit = None;
         append_supervisor_event(&log_file, format!("desktop: daemon started with pid {pid}"))?;
-        thread::sleep(Duration::from_millis(150));
+        wait_for_daemon_health(port, Duration::from_secs(12), Duration::from_millis(250));
         self.sync_locked(&mut runtime);
         self.snapshot_locked(&runtime)
     }
@@ -210,6 +233,14 @@ impl DaemonSupervisor {
             let stopped_as = terminate_child(&mut child)?;
             runtime.last_exit = Some(format!("stopped: {stopped_as}"));
             runtime.last_error = None;
+        } else if runtime.external_running || daemon_health_available(configured_daemon_port()) {
+            let port = configured_daemon_port();
+            if terminate_external_daemon_on_port(port, &log_file)? {
+                runtime.last_exit = Some(format!("stopped external daemon on port {port}"));
+                runtime.last_error = None;
+            } else {
+                runtime.last_exit = Some("external daemon is not managed by this app".into());
+            }
         } else {
             runtime.last_exit = Some("already stopped".into());
         }
@@ -610,26 +641,62 @@ fn configured_daemon_port() -> u16 {
 }
 
 fn daemon_health_available(port: u16) -> bool {
+    daemon_health_probe(port).is_some()
+}
+
+fn daemon_health_is_compatible(health: &DaemonHealthProbe) -> bool {
+    health.api_version >= DAEMON_API_VERSION
+}
+
+fn daemon_health_probe(port: u16) -> Option<DaemonHealthProbe> {
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(250)) else {
-        return false;
+        return None;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(750)));
     let _ = stream.set_write_timeout(Some(Duration::from_millis(250)));
     if stream
         .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
         .is_err()
     {
-        return false;
+        return None;
     }
-    let mut buffer = [0_u8; 64];
-    match stream.read(&mut buffer) {
-        Ok(count) if count > 0 => {
-            let response = String::from_utf8_lossy(&buffer[..count]);
-            response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200")
+
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return None;
+    }
+    let is_ok = response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200");
+    if !is_ok {
+        return None;
+    }
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .or_else(|| response.split_once("\n\n").map(|(_, body)| body))?;
+    serde_json::from_str(body.trim()).ok()
+}
+
+fn wait_for_daemon_health(port: u16, timeout: Duration, interval: Duration) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if daemon_health_available(port) {
+            return true;
         }
-        _ => false,
+        thread::sleep(interval);
     }
+    daemon_health_available(port)
+}
+
+fn wait_for_daemon_shutdown(port: u16, timeout: Duration, interval: Duration) -> bool {
+    let started = std::time::Instant::now();
+    while started.elapsed() < timeout {
+        if !daemon_health_available(port) {
+            return true;
+        }
+        thread::sleep(interval);
+    }
+    !daemon_health_available(port)
 }
 
 fn configured_allow_lan_access() -> bool {
@@ -1345,6 +1412,93 @@ fn signal_process_group(pgid: i32, signal: i32) -> Result<()> {
     }
 }
 
+#[cfg(unix)]
+fn terminate_external_daemon_on_port(port: u16, log_file: &Path) -> Result<bool> {
+    let pids = local_daemon_pids_on_port(port)?;
+    if pids.is_empty() {
+        return Ok(false);
+    }
+
+    let mut signaled = false;
+    for pid in &pids {
+        append_supervisor_event(
+            log_file,
+            format!("desktop: stopping external daemon pid {pid} on port {port}"),
+        )?;
+        signal_process(*pid, libc::SIGTERM)?;
+        signaled = true;
+    }
+
+    if wait_for_daemon_shutdown(port, Duration::from_secs(4), Duration::from_millis(100)) {
+        return Ok(signaled);
+    }
+
+    for pid in &pids {
+        append_supervisor_event(
+            log_file,
+            format!("desktop: force stopping external daemon pid {pid} on port {port}"),
+        )?;
+        signal_process(*pid, libc::SIGKILL)?;
+    }
+    wait_for_daemon_shutdown(port, Duration::from_secs(2), Duration::from_millis(100));
+    Ok(signaled)
+}
+
+#[cfg(not(unix))]
+fn terminate_external_daemon_on_port(_port: u16, _log_file: &Path) -> Result<bool> {
+    Ok(false)
+}
+
+#[cfg(unix)]
+fn local_daemon_pids_on_port(port: u16) -> Result<Vec<u32>> {
+    let output = Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"])
+        .output();
+    let Ok(output) = output else {
+        return Ok(Vec::new());
+    };
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut pids = Vec::new();
+    for line in stdout.lines() {
+        let Some(pid) = line.trim().parse::<u32>().ok() else {
+            continue;
+        };
+        if process_command_contains(pid, DAEMON_BINARY_NAME)? {
+            pids.push(pid);
+        }
+    }
+    Ok(pids)
+}
+
+#[cfg(unix)]
+fn process_command_contains(pid: u32, needle: &str) -> Result<bool> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).contains(needle))
+}
+
+#[cfg(unix)]
+fn signal_process(pid: u32, signal: i32) -> Result<()> {
+    let rc = unsafe { libc::kill(pid as i32, signal) };
+    if rc == 0 {
+        return Ok(());
+    }
+    let error = std::io::Error::last_os_error();
+    if matches!(error.raw_os_error(), Some(libc::ESRCH)) {
+        Ok(())
+    } else {
+        Err(error.into())
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn write_clipboard_text_native(text: &str) -> Result<()> {
     write_to_clipboard_command("/usr/bin/pbcopy", &[], text)
@@ -1425,27 +1579,31 @@ fn select_spawn_spec() -> Result<SpawnSpec> {
         return Ok(binary_spawn_spec(path));
     }
 
-    if let Some(path) = workspace_daemon_binary().filter(|path| daemon_binary_is_fresh(path)) {
-        return Ok(binary_spawn_spec(path));
-    }
-
     if cfg!(debug_assertions) {
+        if let Some(path) = workspace_daemon_binary().filter(|path| daemon_binary_is_fresh(path)) {
+            return Ok(binary_spawn_spec(path));
+        }
+
         if let Some(manifest) = workspace_manifest() {
             let binary = build_workspace_daemon_binary(&manifest)?;
             return Ok(binary_spawn_spec(binary));
         }
+
+        if let Some(path) = workspace_daemon_binary() {
+            return Ok(binary_spawn_spec(path));
+        }
+
+        let manifest = workspace_manifest().context("failed to resolve workspace Cargo.toml")?;
+        return Ok(cargo_spawn_spec(manifest));
     }
 
     if let Some(path) = sibling_daemon_binary() {
         return Ok(binary_spawn_spec(path));
     }
 
-    if let Some(path) = workspace_daemon_binary() {
-        return Ok(binary_spawn_spec(path));
-    }
-
-    let manifest = workspace_manifest().context("failed to resolve workspace Cargo.toml")?;
-    Ok(cargo_spawn_spec(manifest))
+    Err(anyhow::anyhow!(
+        "bundled daemon binary `{DAEMON_BINARY_NAME}` was not found; rebuild the app package so the daemon sidecar is included"
+    ))
 }
 
 fn ensure_tray(app: &AppHandle) -> Result<()> {
@@ -2301,11 +2459,26 @@ fn read_last_log_line() -> Result<Option<String>> {
 fn sibling_daemon_binary() -> Option<PathBuf> {
     let executable = env::current_exe().ok()?;
     let parent = executable.parent()?;
-    let candidates = [
-        parent.join(daemon_binary_name()),
-        parent.join(format!("{}.exe", daemon_binary_name())),
-    ];
+    let mut candidates = daemon_binary_candidates_in(parent);
+
+    #[cfg(target_os = "macos")]
+    if parent.file_name().and_then(|name| name.to_str()) == Some("MacOS") {
+        if let Some(contents_dir) = parent.parent() {
+            candidates.extend(daemon_binary_candidates_in(&contents_dir.join("Resources")));
+            candidates.extend(daemon_binary_candidates_in(
+                &contents_dir.join("Frameworks"),
+            ));
+        }
+    }
+
     candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn daemon_binary_candidates_in(dir: &Path) -> Vec<PathBuf> {
+    vec![
+        dir.join(daemon_binary_name()),
+        dir.join(format!("{}.exe", daemon_binary_name())),
+    ]
 }
 
 fn workspace_daemon_binary() -> Option<PathBuf> {

@@ -475,6 +475,7 @@ const state = {
   locale: detectInitialLocale(),
   activeTab: "dashboard",
   accountProviderFilter: "",
+  accountProviderFilterTouched: false,
   onboardingTarget: "codex",
   onboardingProvider: null,
   providerEditor: null,
@@ -607,6 +608,7 @@ const elements = {
 let liveMonitorRefreshing = false;
 let liveDashboardRefreshing = false;
 let liveStatsRefreshing = false;
+let daemonDataRefreshing = false;
 
 window.addEventListener("DOMContentLoaded", async () => {
   startUiDevPolling();
@@ -1263,17 +1265,36 @@ function bindEvents() {
 async function refreshAll() {
   await refreshAppSettings(true);
   await refreshDaemonStatus(true);
-  await refreshHealth({ attempts: 6, delayMs: 350 });
-  await refreshProviders();
-  await refreshAccounts();
-  await refreshRoutes();
-  await refreshOnboarding();
-  await refreshMonitor(true);
-  await refreshDashboardLogs();
-  await refreshDailyStats(true);
-  await refreshDesktopTrayMenu();
-  renderDashboard();
-  renderStats();
+  const healthy = await refreshHealth({
+    attempts: 20,
+    delayMs: 500,
+    refreshDataOnOnline: false,
+  });
+  if (!healthy) {
+    return;
+  }
+  await refreshDaemonBackedData();
+}
+
+async function refreshDaemonBackedData() {
+  if (daemonDataRefreshing) {
+    return;
+  }
+  daemonDataRefreshing = true;
+  try {
+    await refreshProviders();
+    await refreshAccounts();
+    await refreshRoutes();
+    await refreshOnboarding();
+    await refreshMonitor(true);
+    await refreshDashboardLogs();
+    await refreshDailyStats(true);
+    await refreshDesktopTrayMenu();
+    renderDashboard();
+    renderStats();
+  } finally {
+    daemonDataRefreshing = false;
+  }
 }
 
 async function refreshAppSettings(silent = true) {
@@ -1352,6 +1373,7 @@ async function refreshHealth(options = {}) {
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
+      const wasOffline = !state.health;
       state.health = await api("/health", { silent: true });
       const tone = "ok";
       const chipText = t("Daemon Online");
@@ -1360,7 +1382,10 @@ async function refreshHealth(options = {}) {
       renderChrome();
       renderDashboard();
       renderSettings();
-      return;
+      if (wasOffline && options.refreshDataOnOnline !== false) {
+        void refreshDaemonBackedData();
+      }
+      return true;
     } catch (error) {
       state.health = null;
       if (attempt < attempts - 1) {
@@ -1380,13 +1405,13 @@ async function refreshHealth(options = {}) {
   renderChrome();
   renderDashboard();
   renderSettings();
+  return false;
 }
 
 async function refreshProviders() {
   try {
     state.providers = await api("/admin/providers", { silent: true });
   } catch (error) {
-    state.providers = [];
     console.error(error);
   }
   renderProviders();
@@ -1401,7 +1426,6 @@ async function refreshAccounts() {
   try {
     state.accounts = await api("/admin/accounts", { silent: true });
   } catch (error) {
-    state.accounts = [];
     console.error(error);
   }
   renderAccountProviderTabs();
@@ -1417,7 +1441,6 @@ async function refreshRoutes() {
   try {
     state.routes = await api("/admin/routes", { silent: true });
   } catch (error) {
-    state.routes = [];
     console.error(error);
   }
   renderAccounts();
@@ -2006,6 +2029,7 @@ function renderAccountProviderTabs() {
       if (state.accountProviderFilter === entry.slug) {
         return;
       }
+      state.accountProviderFilterTouched = true;
       state.accountProviderFilter = entry.slug;
       renderAccountProviderTabs();
       renderAccounts();
@@ -3913,12 +3937,22 @@ function normalizeAccountProviderFilter() {
     return state.accountProviderFilter;
   }
 
+  const filterExists = state.providers.some(
+    (provider) => provider.slug === state.accountProviderFilter,
+  );
+  const selectedHasAccounts = state.accounts.some(
+    (account) => account.provider === state.accountProviderFilter,
+  );
   if (
-    !state.providers.some(
-      (provider) => provider.slug === state.accountProviderFilter,
-    )
+    !filterExists ||
+    (!state.accountProviderFilterTouched &&
+      state.accounts.length > 0 &&
+      !selectedHasAccounts)
   ) {
-    state.accountProviderFilter = state.providers[0].slug;
+    state.accountProviderFilter =
+      state.accounts.find((account) =>
+        state.providers.some((provider) => provider.slug === account.provider),
+      )?.provider || state.providers[0].slug;
   }
   return state.accountProviderFilter;
 }

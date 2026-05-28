@@ -15,10 +15,10 @@ use uuid::Uuid;
 use crate::error::{LocalAIRouterError, Result};
 use crate::models::{
     Account, AccountConverter, AccountInput, ApiProtocol, AppSettings, AppSettingsInput,
-    DEFAULT_LOG_RETENTION_DAYS, DEFAULT_MONITOR_BUFFER_LIMIT, DailyStatsPoint, DailyStatsQuery,
-    DeleteResponse, HealthResponse, LogQuery, ProviderDefinition, ProviderInput, RequestLog,
-    RequestLogInput, ResolvedAccount, RouteBinding, RouteBindingInput, TokenRebuildReport,
-    extract_session_id, extract_total_tokens,
+    DAEMON_API_VERSION, DEFAULT_LOG_RETENTION_DAYS, DEFAULT_MONITOR_BUFFER_LIMIT, DailyStatsPoint,
+    DailyStatsQuery, DeleteResponse, HealthResponse, LogQuery, ProviderDefinition, ProviderInput,
+    RequestLog, RequestLogInput, ResolvedAccount, RouteBinding, RouteBindingInput,
+    TokenRebuildReport, extract_session_id, extract_total_tokens,
 };
 use crate::onboarding::{DEFAULT_PORT, guide_for_target};
 use crate::sqlite::{Connection, Row, SqlValue};
@@ -237,6 +237,7 @@ impl Repository {
     pub async fn health(&self) -> Result<HealthResponse> {
         Ok(HealthResponse {
             version: env!("CARGO_PKG_VERSION").into(),
+            api_version: DAEMON_API_VERSION,
             started_at: self.started_at.clone(),
             db_path: self.paths.database.to_string_lossy().into_owned(),
             port: self.port,
