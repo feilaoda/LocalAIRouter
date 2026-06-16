@@ -22,7 +22,7 @@ use localairouter_core::models::{
     ProviderInput, RequestLogInput, ResolvedAccount, RouteBindingInput,
 };
 use localairouter_core::{LocalAIRouterError, Repository, Result, extract_model};
-use reqwest::Client;
+use reqwest::{Client, Proxy};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use tokio::net::TcpListener;
@@ -68,6 +68,8 @@ struct MonitorEntry {
     duration_ms: Option<u64>,
     error_text: Option<String>,
     upstream_url: Option<String>,
+    network_mode: Option<String>,
+    http_proxy_url: Option<String>,
     converter: Option<String>,
     request_preview: String,
     response_preview: String,
@@ -113,6 +115,8 @@ impl MonitorFeed {
             duration_ms: None,
             error_text: None,
             upstream_url: None,
+            network_mode: None,
+            http_proxy_url: None,
             converter: None,
             request_preview: preview_text(request_body),
             response_preview: String::new(),
@@ -132,12 +136,16 @@ impl MonitorFeed {
         model: Option<String>,
         request_body: &str,
         upstream_url: &str,
+        network_mode: &str,
+        http_proxy_url: Option<&str>,
         converter: Option<&str>,
     ) {
         self.update_entry(id, |entry| {
             entry.account_id = Some(account_id.into());
             entry.model = model;
             entry.upstream_url = Some(upstream_url.into());
+            entry.network_mode = Some(network_mode.into());
+            entry.http_proxy_url = http_proxy_url.map(str::to_owned);
             entry.converter = converter.map(str::to_owned);
             entry.request_preview = preview_text(request_body);
             entry.phase = "upstream".into();
@@ -535,12 +543,76 @@ async fn proxy_request(
         },
         query
     );
+
+    let upstream_client = match upstream_client_for_account(&state, &resolved).await {
+        Ok(client) => client,
+        Err(error) => {
+            let network_mode = requested_network_mode(&resolved);
+            state.monitor.mark_routed(
+                &monitor_id,
+                &resolved.account.id,
+                model.clone(),
+                &request_body_text,
+                &upstream_url,
+                network_mode,
+                None,
+                converter_label.as_deref(),
+            );
+            let request_body_text = prepend_log_diagnostics(
+                &request_body_text,
+                &client_upstream_path,
+                &upstream_path,
+                &upstream_url,
+                converter_label.as_deref(),
+                network_mode,
+                None,
+            );
+            let status = match &error {
+                LocalAIRouterError::Validation(_) | LocalAIRouterError::Message(_) => {
+                    StatusCode::BAD_REQUEST
+                }
+                _ => StatusCode::BAD_GATEWAY,
+            };
+            state.monitor.complete(
+                &monitor_id,
+                Some(status.as_u16()),
+                start.elapsed().as_millis() as u64,
+                Some(error.to_string()),
+                None,
+                false,
+            );
+            let inserted_log = state
+                .repository
+                .insert_log(RequestLogInput {
+                    provider: resolved.provider.slug.clone(),
+                    model,
+                    account_id: Some(resolved.account.id.clone()),
+                    method: method.to_string(),
+                    path: request_path.clone(),
+                    status_code: Some(status.as_u16()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    error_text: Some(error.to_string()),
+                    request_headers: request_headers.clone(),
+                    request_body: request_body_text,
+                    response_headers: "{}".into(),
+                    response_body: String::new(),
+                    streamed: false,
+                })
+                .await;
+            if let Ok(log) = inserted_log {
+                state.monitor.attach_log(&monitor_id, log.id);
+            }
+            return Err(error);
+        }
+    };
     state.monitor.mark_routed(
         &monitor_id,
         &resolved.account.id,
         model.clone(),
         &request_body_text,
         &upstream_url,
+        upstream_client.network_mode,
+        upstream_client.http_proxy_url.as_deref(),
         converter_label.as_deref(),
     );
     let request_body_text = prepend_log_diagnostics(
@@ -549,9 +621,11 @@ async fn proxy_request(
         &upstream_path,
         &upstream_url,
         converter_label.as_deref(),
+        upstream_client.network_mode,
+        upstream_client.http_proxy_url.as_deref(),
     );
 
-    let mut builder = state
+    let mut builder = upstream_client
         .client
         .request(
             reqwest::Method::from_bytes(method.as_str().as_bytes()).map_err(map_http)?,
@@ -577,11 +651,12 @@ async fn proxy_request(
     let upstream_response = match builder.send().await {
         Ok(response) => response,
         Err(error) => {
+            let error_text = upstream_transport_error_text(&upstream_client, &error);
             state.monitor.complete(
                 &monitor_id,
                 Some(StatusCode::BAD_GATEWAY.as_u16()),
                 start.elapsed().as_millis() as u64,
-                Some(error.to_string()),
+                Some(error_text.clone()),
                 None,
                 false,
             );
@@ -595,7 +670,7 @@ async fn proxy_request(
                     path: request_path.clone(),
                     status_code: Some(StatusCode::BAD_GATEWAY.as_u16()),
                     duration_ms: start.elapsed().as_millis() as u64,
-                    error_text: Some(error.to_string()),
+                    error_text: Some(error_text.clone()),
                     request_headers: request_headers.clone(),
                     request_body: request_body_text,
                     response_headers: "{}".into(),
@@ -606,7 +681,7 @@ async fn proxy_request(
             if let Ok(log) = inserted_log {
                 state.monitor.attach_log(&monitor_id, log.id);
             }
-            return Err(LocalAIRouterError::Http(error.to_string()));
+            return Err(LocalAIRouterError::Http(error_text));
         }
     };
 
@@ -842,11 +917,15 @@ fn prepend_log_diagnostics(
     upstream_path: &str,
     upstream_url: &str,
     converter_label: Option<&str>,
+    network_mode: &str,
+    http_proxy_url: Option<&str>,
 ) -> String {
     let diagnostics = serde_json::json!({
         "client_upstream_path": client_upstream_path,
         "upstream_path": upstream_path,
         "upstream_url": upstream_url,
+        "network_mode": network_mode,
+        "http_proxy_url": http_proxy_url,
         "converter": converter_label,
     });
     let Ok(diagnostics) = serde_json::to_string(&diagnostics) else {
@@ -949,6 +1028,63 @@ fn apply_provider_auth(
         ))
     })?;
     Ok(builder.header(header_name, header_value))
+}
+
+struct UpstreamClient {
+    client: Client,
+    network_mode: &'static str,
+    http_proxy_url: Option<String>,
+}
+
+async fn upstream_client_for_account(
+    state: &AppState,
+    resolved: &ResolvedAccount,
+) -> Result<UpstreamClient> {
+    if !resolved.account.use_http_proxy {
+        return Ok(UpstreamClient {
+            client: state.client.clone(),
+            network_mode: "direct",
+            http_proxy_url: None,
+        });
+    }
+
+    let settings = state.repository.app_settings().await?;
+    let proxy_url = settings.http_proxy_url.ok_or_else(|| {
+        LocalAIRouterError::Validation(
+            "HTTP proxy URL is required when account HTTP proxy is enabled".into(),
+        )
+    })?;
+    let proxy = Proxy::all(&proxy_url).map_err(|error| {
+        LocalAIRouterError::Validation(format!("invalid HTTP proxy URL `{proxy_url}`: {error}"))
+    })?;
+    let client = Client::builder()
+        .no_gzip()
+        .proxy(proxy)
+        .build()
+        .map_err(map_http)?;
+    Ok(UpstreamClient {
+        client,
+        network_mode: "proxy",
+        http_proxy_url: Some(proxy_url),
+    })
+}
+
+fn requested_network_mode(resolved: &ResolvedAccount) -> &'static str {
+    if resolved.account.use_http_proxy {
+        "proxy"
+    } else {
+        "direct"
+    }
+}
+
+fn upstream_transport_error_text(network: &UpstreamClient, error: &reqwest::Error) -> String {
+    match (network.network_mode, network.http_proxy_url.as_deref()) {
+        ("proxy", Some(proxy_url)) => {
+            format!("upstream request failed via HTTP proxy {proxy_url}: {error}")
+        }
+        ("proxy", None) => format!("upstream request failed via HTTP proxy: {error}"),
+        _ => format!("upstream request failed directly: {error}"),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1455,6 +1591,7 @@ mod tests {
                 base_url: Some("https://api.deepseek.com/v1".into()),
                 default_model: None,
                 converter,
+                use_http_proxy: false,
                 enabled: true,
                 note: None,
                 api_key_masked: None,

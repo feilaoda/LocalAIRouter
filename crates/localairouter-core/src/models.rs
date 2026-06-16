@@ -137,6 +137,8 @@ pub struct AppSettings {
     pub daemon_port: u16,
     #[serde(default)]
     pub allow_lan_access: bool,
+    #[serde(default)]
+    pub http_proxy_url: Option<String>,
     pub monitor_buffer_limit: u32,
     pub log_retention_days: u32,
     pub logs_dir: String,
@@ -151,6 +153,8 @@ pub struct AppSettingsInput {
     pub daemon_port: u16,
     #[serde(default)]
     pub allow_lan_access: bool,
+    #[serde(default)]
+    pub http_proxy_url: Option<String>,
     #[serde(default = "default_monitor_buffer_limit")]
     pub monitor_buffer_limit: u32,
     #[serde(default = "default_log_retention_days")]
@@ -182,6 +186,8 @@ pub struct Account {
     pub base_url: Option<String>,
     pub default_model: Option<String>,
     pub converter: AccountConverter,
+    #[serde(default)]
+    pub use_http_proxy: bool,
     pub enabled: bool,
     pub note: Option<String>,
     pub api_key_masked: Option<String>,
@@ -201,6 +207,8 @@ pub struct AccountInput {
     pub default_model: Option<String>,
     #[serde(default)]
     pub converter: AccountConverter,
+    #[serde(default)]
+    pub use_http_proxy: bool,
     pub api_key: Option<String>,
     pub note: Option<String>,
     #[serde(default = "default_true")]

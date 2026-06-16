@@ -62,6 +62,10 @@ const ZH_MESSAGES = {
   "Active Routes": "当前路由",
   "Default rules appear alongside model-prefix overrides. Overrides always win when a request model matches the prefix.":
     "默认规则和模型前缀覆盖规则会同时显示。请求模型命中前缀时，覆盖规则优先。",
+  Config: "配置",
+  "Routing Config": "路由配置",
+  "Manage providers, accounts, and route bindings in one place.":
+    "在一个页面里管理 Provider、账号和路由绑定。",
   "New Route": "新建路由",
   Reload: "刷新",
   "Live Logs": "实时日志",
@@ -110,6 +114,11 @@ const ZH_MESSAGES = {
   "LAN access URL: {url}": "局域网访问地址：{url}",
   "Unable to determine LAN IP. Check your network connection.":
     "无法确定局域网 IP，请检查网络连接。",
+  "HTTP Proxy URL": "HTTP Proxy URL",
+  "Optional. Example: http://127.0.0.1:7890":
+    "可选，例如：http://127.0.0.1:7890",
+  "Accounts only use this proxy when their HTTP proxy switch is enabled.":
+    "只有开启 HTTP Proxy 开关的账号才会使用这里配置的代理。",
   "Live Log Buffer": "实时日志缓冲",
   "Log Retention Days": "日志保留天数",
   "Traffic Logs Directory": "流量日志目录",
@@ -158,6 +167,98 @@ const ZH_MESSAGES = {
   "Default Model": "默认模型",
   "Optional. Overrides client request model for this account":
     "可选。配置后此账号会覆盖客户端请求里的模型。",
+  "Use HTTP Proxy": "使用 HTTP Proxy",
+  "HTTP proxy": "HTTP Proxy",
+  "HTTP proxy enabled": "已启用 HTTP Proxy",
+  direct: "直连",
+  Skills: "技能",
+  "Skills Manager": "技能管理",
+  "Manage local agent skills installed under Codex and agent skill directories. This view is read-only for safety; open a skill folder to edit it.":
+    "管理 LocalAIRouter 技能库以及暴露到 Codex / Agents 的链接。为了安全，这里只做只读管理；需要编辑时可打开技能目录。",
+  "Install skills into the LocalAIRouter store, expose them to agents through symlinks, and open folders when you need to edit definitions.":
+    "把技能安装到 LocalAIRouter 本地技能库，通过符号链接暴露给不同 Agent；需要编辑定义时直接打开目录。",
+  "Search Skills": "搜索技能",
+  "Search skills by name": "按名称搜索技能",
+  "Open Skills Root": "打开技能根目录",
+  "Import Skill": "导入技能",
+  "Install from Git": "从 Git 安装",
+  "Clone a Git repository, scan for directories containing SKILL.md, then install the whole selected skill directory.":
+    "克隆 Git 仓库，扫描包含 SKILL.md 的目录，然后安装选中的完整技能目录。",
+  "Review the selected local skill before installing it into a user skills directory.":
+    "安装到用户技能目录前，先确认选中的本地技能。",
+  "Review the selected skill before installing it into a user skills directory.":
+    "安装到用户技能目录前，先确认选中的技能。",
+  "Close Git install dialog": "关闭 Git 安装对话框",
+  "Git URL": "Git URL",
+  "Branch or Tag": "分支或标签",
+  "Optional. Defaults to repository default branch":
+    "可选，默认使用仓库默认分支",
+  "Each candidate installs its entire directory, including scripts, templates, assets, and nested files.":
+    "每个候选项都会安装完整目录，包括脚本、模板、资源和嵌套文件。",
+  "Scan Git": "扫描 Git",
+  "Import Selected": "导入选中",
+  "Imported {count} skill(s).": "已导入 {count} 个技能。",
+  "Select at least one skill to import.": "请至少选择一个技能导入。",
+  "Toggle Codex link": "切换 Codex 链接",
+  "Toggle Agents link": "切换 Agents 链接",
+  "{agent} enabled.": "{agent} 已启用。",
+  "{agent} disabled.": "{agent} 已禁用。",
+  "Codex enabled.": "Codex 已启用。",
+  "Codex disabled.": "Codex 已禁用。",
+  "Agents enabled.": "Agents 已启用。",
+  "Agents disabled.": "Agents 已禁用。",
+  "Failed to update skill agent link.": "更新技能 Agent 链接失败。",
+  "Replace Existing Skill Link": "替换已有 Skill",
+  "A path for this skill already exists in the {agent} skills directory. Move the existing path to a timestamped backup and enable this skill?":
+    "{agent} skills 目录下已经存在同名路径。是否把已有路径移动到带时间戳的备份目录，然后启用这个 skill？",
+  "Replace and Enable": "备份并启用",
+  "Scanning Git repository…": "正在扫描 Git 仓库…",
+  "Git scan found {count} skill(s).": "Git 扫描发现 {count} 个技能。",
+  "No Git skills scanned yet.": "还没有扫描 Git 技能。",
+  "Select for Import": "选择导入",
+  "Repo Path": "仓库路径",
+  "Git URL is required.": "Git URL 不能为空。",
+  "Failed to scan Git repository.": "扫描 Git 仓库失败。",
+  "Install To": "安装到",
+  "Local Store": "本地技能库",
+  "Local Store Only": "仅本地技能库",
+  "Codex Link": "Codex 链接",
+  "Agents Link": "Agents 链接",
+  "If Same Directory Exists": "如果同名目录已存在",
+  "Auto Rename": "自动重命名",
+  "Replace Existing": "替换现有目录",
+  "Cancel Import": "取消导入",
+  "Import copies the selected directory. It does not modify the original skill.":
+    "导入会复制选中的目录，不会修改原始技能。",
+  "Install stores a full copy under ~/.localairouter/skills. Codex and Agents targets are symlinks to that store.":
+    "安装会把完整技能目录复制到 ~/.localairouter/skills。Codex 和 Agents 目标只是指向该技能库的符号链接。",
+  "Close skill import dialog": "关闭技能导入对话框",
+  "Skill imported: {name}.": "技能已导入：{name}。",
+  "Failed to import skill.": "导入技能失败。",
+  "Choose a local skill directory first.": "请先选择一个本地技能目录。",
+  "Source Directory": "源目录",
+  "Definition File": "定义文件",
+  "Target Directory Name": "目标目录名",
+  Description: "描述",
+  "Installed Skills": "已安装技能",
+  "Codex User": "Codex 用户",
+  "Codex System": "Codex 系统",
+  "Agents User": "Agents 用户",
+  "No description provided.": "没有描述。",
+  "No skills found.": "没有找到技能。",
+  "No matching skills found.": "没有匹配的技能。",
+  "Open Folder": "打开目录",
+  "Open Definition": "打开定义",
+  "Copy Path": "复制路径",
+  "Skill path copied.": "技能路径已复制。",
+  "Skills refreshed.": "技能已刷新。",
+  "Skills root opened.": "技能根目录已打开。",
+  "Failed to load skills.": "加载技能失败。",
+  "Failed to open skills root.": "打开技能根目录失败。",
+  "Skill definition opened.": "技能定义已打开。",
+  "Skill folder opened.": "技能目录已打开。",
+  "Failed to open skill definition.": "打开技能定义失败。",
+  "Failed to open skill folder.": "打开技能目录失败。",
   "Optional. Overrides client request model for this provider":
     "可选。配置后此 Provider 会覆盖客户端请求里的模型。",
   "default model {model}": "默认模型 {model}",
@@ -466,6 +567,14 @@ const state = {
   accounts: [],
   routes: [],
   monitor: [],
+  skills: [],
+  skillSourceFilter: "all",
+  skillSearchQuery: "",
+  skillImportPreview: null,
+  skillImportCleanupRoot: null,
+  skillGitCheckoutPath: null,
+  skillGitCandidates: [],
+  skillGitSelectedPaths: new Set(),
   dashboardLogs: [],
   dailyStats: [],
   statsSelectedDay: null,
@@ -474,6 +583,7 @@ const state = {
   lanIp: "",
   locale: detectInitialLocale(),
   activeTab: "dashboard",
+  configSection: "providers",
   accountProviderFilter: "",
   accountProviderFilterTouched: false,
   onboardingTarget: "codex",
@@ -507,6 +617,10 @@ const elements = {
   localeSelect: document.querySelector("#locale-select"),
   tabButtons: Array.from(document.querySelectorAll(".tab-button")),
   tabPanels: Array.from(document.querySelectorAll(".tab-panel")),
+  configSectionTabs: Array.from(
+    document.querySelectorAll("[data-config-section]"),
+  ),
+  configPanels: Array.from(document.querySelectorAll("[data-config-panel]")),
   metricsList: document.querySelector("#metrics-list"),
   statsSummaryList: document.querySelector("#stats-summary-list"),
   statsRequestsChart: document.querySelector("#stats-requests-chart"),
@@ -521,6 +635,7 @@ const elements = {
   settingsForm: document.querySelector("#settings-form"),
   settingsDaemonPort: document.querySelector("#settings-daemon-port"),
   settingsAllowLan: document.querySelector("#settings-allow-lan"),
+  settingsHttpProxyUrl: document.querySelector("#settings-http-proxy-url"),
   settingsMonitorBuffer: document.querySelector("#settings-monitor-buffer"),
   settingsLogRetentionDays: document.querySelector(
     "#settings-log-retention-days",
@@ -570,6 +685,7 @@ const elements = {
   accountKeyToggleView: document.querySelector("#account-key-toggle-view"),
   accountBaseUrl: document.querySelector("#account-base-url"),
   accountDefaultModel: document.querySelector("#account-default-model"),
+  accountUseHttpProxy: document.querySelector("#account-use-http-proxy"),
   accountNote: document.querySelector("#account-note"),
   accountEnabled: document.querySelector("#account-enabled"),
   accountsProviderTabs: document.querySelector("#accounts-provider-tabs"),
@@ -602,6 +718,32 @@ const elements = {
   monitorList: document.querySelector("#monitor-list"),
   refreshMonitor: document.querySelector("#refresh-monitor"),
   openLogsRoot: document.querySelector("#open-logs-root"),
+  skillSearchInput: document.querySelector("#skill-search"),
+  skillsSourceTabs: document.querySelector("#skills-source-tabs"),
+  skillsList: document.querySelector("#skills-list"),
+  refreshSkills: document.querySelector("#refresh-skills"),
+  openSkillsRoot: document.querySelector("#open-skills-root"),
+  importSkill: document.querySelector("#import-skill"),
+  installSkillGit: document.querySelector("#install-skill-git"),
+  skillGitDialog: document.querySelector("#skill-git-dialog"),
+  closeSkillGitDialog: document.querySelector("#close-skill-git-dialog"),
+  skillGitForm: document.querySelector("#skill-git-form"),
+  skillGitFormError: document.querySelector("#skill-git-form-error"),
+  skillGitUrl: document.querySelector("#skill-git-url"),
+  skillGitRef: document.querySelector("#skill-git-ref"),
+  skillGitConflict: document.querySelector("#skill-git-conflict"),
+  skillGitResult: document.querySelector("#skill-git-result"),
+  skillGitCancel: document.querySelector("#skill-git-cancel"),
+  skillGitScan: document.querySelector("#skill-git-scan"),
+  skillGitImportSelected: document.querySelector("#skill-git-import-selected"),
+  skillImportDialog: document.querySelector("#skill-import-dialog"),
+  closeSkillImportDialog: document.querySelector("#close-skill-import-dialog"),
+  skillImportForm: document.querySelector("#skill-import-form"),
+  skillImportFormError: document.querySelector("#skill-import-form-error"),
+  skillImportPreview: document.querySelector("#skill-import-preview"),
+  skillImportConflict: document.querySelector("#skill-import-conflict"),
+  skillImportCancel: document.querySelector("#skill-import-cancel"),
+  skillImportSubmit: document.querySelector("#skill-import-submit"),
   toastStack: document.querySelector("#toast-stack"),
   emptyTemplate: document.querySelector("#empty-template"),
 };
@@ -722,6 +864,9 @@ function applyLocale(rerender) {
   document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {
     node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
   });
+  document.querySelectorAll("[data-i18n-title]").forEach((node) => {
+    node.setAttribute("title", t(node.dataset.i18nTitle));
+  });
   elements.localeSelect.value = state.locale;
   if (!rerender) {
     return;
@@ -733,7 +878,11 @@ function applyLocale(rerender) {
   renderAccountProviderTabs();
   renderAccounts();
   renderRoutes();
+  renderConfigSections();
   renderMonitor();
+  renderSkills();
+  renderGitSkillCandidates();
+  renderSkillImportPreview();
   renderOnboarding();
   renderSettings();
   renderProviderPathDemo();
@@ -812,6 +961,11 @@ function bindEvents() {
   elements.tabButtons.forEach((button) => {
     button.addEventListener("click", () => setActiveTab(button.dataset.tab));
   });
+  elements.configSectionTabs.forEach((button) => {
+    button.addEventListener("click", () =>
+      setConfigSection(button.dataset.configSection),
+    );
+  });
   window.addEventListener("localairouter:navigate", (event) => {
     if (typeof event.detail === "string") {
       setActiveTab(event.detail);
@@ -827,6 +981,7 @@ function bindEvents() {
     await refreshAccounts();
     await refreshRoutes();
     await refreshOnboarding();
+    await refreshSkills(true);
     await refreshDashboardLogs();
     await refreshDailyStats(true);
   });
@@ -835,6 +990,7 @@ function bindEvents() {
     await refreshAccounts();
     await refreshRoutes();
     await refreshOnboarding();
+    await refreshSkills(true);
     await refreshDashboardLogs();
     await refreshDailyStats(true);
   });
@@ -863,6 +1019,16 @@ function bindEvents() {
       closeRouteDialog();
     }
   });
+  elements.skillImportDialog?.addEventListener("click", (event) => {
+    if (event.target === elements.skillImportDialog) {
+      closeSkillImportDialog();
+    }
+  });
+  elements.skillGitDialog?.addEventListener("click", (event) => {
+    if (event.target === elements.skillGitDialog) {
+      closeSkillGitDialog();
+    }
+  });
   elements.confirmDialog.addEventListener("click", (event) => {
     if (event.target === elements.confirmDialog) {
       closeConfirmDialog();
@@ -874,9 +1040,18 @@ function bindEvents() {
   elements.providerDialog.addEventListener("close", resetProviderForm);
   elements.accountDialog.addEventListener("close", resetAccountForm);
   elements.routeDialog.addEventListener("close", resetRouteForm);
+  elements.skillImportDialog?.addEventListener("close", resetSkillImportDialog);
+  elements.skillGitDialog?.addEventListener("close", resetSkillGitDialog);
   elements.closeProviderDialog.addEventListener("click", closeProviderDialog);
   elements.closeAccountDialog.addEventListener("click", closeAccountDialog);
   elements.closeRouteDialog.addEventListener("click", closeRouteDialog);
+  elements.closeSkillImportDialog?.addEventListener(
+    "click",
+    closeSkillImportDialog,
+  );
+  elements.skillImportCancel?.addEventListener("click", closeSkillImportDialog);
+  elements.closeSkillGitDialog?.addEventListener("click", closeSkillGitDialog);
+  elements.skillGitCancel?.addEventListener("click", closeSkillGitDialog);
   elements.closeConfirmDialog.addEventListener("click", closeConfirmDialog);
   elements.confirmCancel.addEventListener("click", closeConfirmDialog);
   elements.confirmForm.addEventListener("submit", async (event) => {
@@ -960,6 +1135,50 @@ function bindEvents() {
     await refreshMonitor(false);
     notify(t("Logs refreshed."), "info");
   });
+  elements.refreshSkills?.addEventListener("click", async () => {
+    await refreshSkills(false);
+    notify(t("Skills refreshed."), "info");
+  });
+  elements.skillSearchInput?.addEventListener("input", () => {
+    state.skillSearchQuery = elements.skillSearchInput.value;
+    renderSkills();
+  });
+  elements.importSkill?.addEventListener("click", async () => {
+    const preview = await performDesktop(
+      () => invokeDesktop("pick_skill_import_directory"),
+      null,
+      t("Failed to import skill."),
+    );
+    if (!preview) {
+      return;
+    }
+    openSkillImportDialog(preview);
+  });
+  elements.installSkillGit?.addEventListener("click", () => {
+    openSkillGitDialog();
+  });
+  elements.openSkillsRoot?.addEventListener("click", async () => {
+    await performDesktop(
+      () =>
+        invokeDesktop("open_skills_root", {
+          source:
+            state.skillSourceFilter === "all" ? null : state.skillSourceFilter,
+        }),
+      t("Skills root opened."),
+      t("Failed to open skills root."),
+    );
+  });
+  elements.skillImportForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await submitSkillImport();
+  });
+  elements.skillGitForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await scanGitSkills();
+  });
+  elements.skillGitImportSelected?.addEventListener("click", async () => {
+    await importSelectedGitSkills();
+  });
   elements.refreshStats?.addEventListener("click", async () => {
     await refreshDailyStats(false);
     notify(t("Stats refreshed."), "info");
@@ -994,6 +1213,9 @@ function bindEvents() {
       await refreshLanIp(false);
     }
     renderSettings();
+  });
+  elements.settingsHttpProxyUrl.addEventListener("input", () => {
+    state.settingsDirty = true;
   });
   elements.settingsMonitorBuffer.addEventListener("input", () => {
     state.settingsDirty = true;
@@ -1073,6 +1295,7 @@ function bindEvents() {
     const logRetentionDays = Number(
       elements.settingsLogRetentionDays.value || DEFAULT_LOG_RETENTION_DAYS,
     );
+    const httpProxyUrl = normalizeOptional(elements.settingsHttpProxyUrl.value);
     const logsDir = normalizeOptional(elements.settingsLogsDir.value);
     const saved = await performDesktop(
       () =>
@@ -1080,6 +1303,7 @@ function bindEvents() {
           input: {
             daemonPort,
             allowLanAccess,
+            httpProxyUrl,
             monitorBufferLimit,
             logRetentionDays,
             logsDir,
@@ -1287,6 +1511,7 @@ async function refreshDaemonBackedData() {
     await refreshRoutes();
     await refreshOnboarding();
     await refreshMonitor(true);
+    await refreshSkills(true);
     await refreshDashboardLogs();
     await refreshDailyStats(true);
     await refreshDesktopTrayMenu();
@@ -1490,6 +1715,24 @@ async function refreshMonitor(silent = true) {
     console.error(error);
   }
   renderMonitor();
+}
+
+async function refreshSkills(silent = true) {
+  if (!hasDesktopIntegration()) {
+    state.skills = [];
+    renderSkills();
+    return;
+  }
+  try {
+    state.skills = await invokeDesktop("list_skills");
+  } catch (error) {
+    state.skills = [];
+    if (!silent) {
+      notify(error?.message || t("Failed to load skills."), "error");
+    }
+    console.error(error);
+  }
+  renderSkills();
 }
 
 async function refreshOnboarding() {
@@ -2055,6 +2298,9 @@ function renderAccounts() {
         t("default model {model}", { model: account.defaultModel }),
       );
     }
+    if (account.useHttpProxy) {
+      detailParts.push(t("HTTP proxy enabled"));
+    }
     if (account.note) {
       detailParts.push(account.note);
     }
@@ -2077,6 +2323,7 @@ function renderAccounts() {
             : `<span class="pill warn">${escapeHtml(t("missing secret"))}</span>`
         }
         <span class="pill ${account.baseUrl ? "warm" : ""}">${escapeHtml(account.baseUrl ? t("account base url") : t("provider base url"))}</span>
+        ${account.useHttpProxy ? `<span class="pill warm">${escapeHtml(t("HTTP proxy"))}</span>` : ""}
         ${isDefaultAccount ? `<span class="pill ok">${escapeHtml(t("default"))}</span>` : ""}
         <span class="pill">${escapeHtml(routeCountLabel(routeCount))}</span>
         <span class="pill">${escapeHtml(t("updated {time}", { time: formatRelativeTime(account.updatedAt) }))}</span>
@@ -2375,6 +2622,7 @@ function renderMonitor() {
       <div class="data-meta">
         <span class="pill">${escapeHtml(providerName)}</span>
         <span class="pill">${escapeHtml(accountName)}</span>
+        ${monitorNetworkPill(entry)}
         ${entry.upstreamUrl ? `<span class="pill" title="${escapeHtml(entry.upstreamUrl)}">${escapeHtml(truncateMiddle(entry.upstreamUrl, 42))}</span>` : ""}
         <span class="pill">${escapeHtml(entry.streamed ? t("streamed") : t("sync"))}</span>
         <span class="pill">${escapeHtml(monitorDurationLabel(entry))}</span>
@@ -2403,6 +2651,501 @@ function renderMonitor() {
       ? items
       : [emptyNode(t("No live traffic in memory right now."))]),
   );
+}
+
+function renderSkills() {
+  renderSkillSourceTabs();
+  if (
+    elements.skillSearchInput &&
+    elements.skillSearchInput.value !== state.skillSearchQuery
+  ) {
+    elements.skillSearchInput.value = state.skillSearchQuery;
+  }
+  const visibleSkills = filteredSkills();
+  const items = visibleSkills.map((skill) => {
+    const item = document.createElement("article");
+    item.className = "data-item skill-item";
+    item.innerHTML = `
+      <div class="item-title">
+        <div class="item-copy">
+          <h3>${escapeHtml(skill.name)}</h3>
+          <p class="muted item-detail clamp-2">${escapeHtml(skill.description || t("No description provided."))}</p>
+        </div>
+        ${state.skillSourceFilter === "all" ? `<span class="pill ${skillSourceTone(skill.source)}">${escapeHtml(t(skill.sourceLabel))}</span>` : ""}
+      </div>
+      <div class="data-meta">
+        <span class="pill" title="${escapeHtml(skill.skillPath)}">${escapeHtml(truncateMiddle(skill.skillPath, 52))}</span>
+        <span class="pill">${escapeHtml(t("updated {time}", { time: formatRelativeTime(skill.updatedAt) }))}</span>
+      </div>
+      <div class="actions">
+        ${skill.source === "local-store" ? `
+          <button type="button" class="ghost skill-agent-toggle ${skill.codexLinked ? "is-active" : ""}" data-agent="codex" title="${escapeHtml(t("Toggle Codex link"))}">Codex</button>
+          <button type="button" class="ghost skill-agent-toggle ${skill.agentsLinked ? "is-active" : ""}" data-agent="agents" title="${escapeHtml(t("Toggle Agents link"))}">Agents</button>
+        ` : ""}
+        <button type="button" class="ghost">${escapeHtml(t("Open Folder"))}</button>
+      </div>
+    `;
+    item.querySelectorAll(".skill-agent-toggle").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await toggleSkillAgentLink(
+          skill,
+          button.dataset.agent,
+          !button.classList.contains("is-active"),
+        );
+      });
+    });
+    const actionButtons = Array.from(item.querySelectorAll(".actions > button"))
+      .filter((button) => !button.classList.contains("skill-agent-toggle"));
+    const [openFolderButton] = actionButtons;
+    openFolderButton.addEventListener("click", async () => {
+      await openSkillPath(skill, "folder");
+    });
+    return item;
+  });
+  elements.skillsList.replaceChildren(
+    ...(items.length
+      ? items
+      : [
+          emptyNode(
+            state.skillSearchQuery
+              ? t("No matching skills found.")
+              : t("No skills found."),
+          ),
+        ]),
+  );
+}
+
+function renderSkillSourceTabs() {
+  if (!elements.skillsSourceTabs) {
+    return;
+  }
+  const entries = [
+    { source: "all", label: t("All"), count: state.skills.length },
+    { source: "local-store", label: t("Local Store"), count: countSkillsBySource("local-store") },
+    { source: "codex-user", label: t("Codex Link"), count: countSkillsBySource("codex-user") },
+    { source: "codex-system", label: t("Codex System"), count: countSkillsBySource("codex-system") },
+    { source: "agents-user", label: t("Agents Link"), count: countSkillsBySource("agents-user") },
+  ];
+  const buttons = entries.map((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `filter-tab${entry.source === state.skillSourceFilter ? " is-active" : ""}`;
+    button.textContent = t("{label} ({count})", {
+      label: entry.label,
+      count: entry.count,
+    });
+    button.addEventListener("click", () => {
+      state.skillSourceFilter = entry.source;
+      renderSkills();
+    });
+    return button;
+  });
+  elements.skillsSourceTabs.replaceChildren(...buttons);
+}
+
+function filteredSkills() {
+  const sourceFiltered =
+    state.skillSourceFilter === "all"
+      ? state.skills
+      : state.skills.filter(
+          (skill) => skill.source === state.skillSourceFilter,
+        );
+  const query = normalizeSkillSearch(state.skillSearchQuery);
+  if (!query) {
+    return sourceFiltered;
+  }
+  return sourceFiltered.filter((skill) =>
+    matchesSkillSearch(skill.name, query),
+  );
+}
+
+function countSkillsBySource(source) {
+  return state.skills.filter((skill) => skill.source === source).length;
+}
+
+function normalizeSkillSearch(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function matchesSkillSearch(name, query) {
+  const normalizedName = normalizeSkillSearch(name);
+  return (
+    normalizedName.includes(query) ||
+    fuzzyIncludesInOrder(normalizedName, query)
+  );
+}
+
+function fuzzyIncludesInOrder(text, query) {
+  let queryIndex = 0;
+  for (const char of text) {
+    if (char === query[queryIndex]) {
+      queryIndex += 1;
+      if (queryIndex === query.length) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function skillSourceTone(source) {
+  if (source === "local-store") {
+    return "ok";
+  }
+  if (source === "codex-system") {
+    return "warn";
+  }
+  if (source === "agents-user") {
+    return "warm";
+  }
+  return "";
+}
+
+async function openSkillPath(skill, target) {
+  await performDesktop(
+    () =>
+      invokeDesktop("open_skill_path", {
+        skillId: skill.id,
+        target,
+      }),
+    target === "file"
+      ? t("Skill definition opened.")
+      : t("Skill folder opened."),
+    target === "file"
+      ? t("Failed to open skill definition.")
+      : t("Failed to open skill folder."),
+  );
+}
+
+async function toggleSkillAgentLink(skill, agent, enabled) {
+  const label = agent === "codex" ? "Codex" : "Agents";
+  const request = (replaceExisting = false) =>
+    invokeDesktop("set_skill_agent_link", {
+      request: {
+        skillId: skill.id,
+        agent,
+        enabled,
+        replaceExisting,
+      },
+    });
+
+  try {
+    const updated = await request(false);
+    notify(
+      enabled
+        ? t("{agent} enabled.", { agent: label })
+        : t("{agent} disabled.", { agent: label }),
+      "success",
+    );
+    if (updated) {
+      await refreshSkills(true);
+    }
+  } catch (error) {
+    if (enabled && isSkillAgentPathConflict(error)) {
+      requestConfirmation({
+        title: t("Replace Existing Skill Link"),
+        message: t(
+          "A path for this skill already exists in the {agent} skills directory. Move the existing path to a timestamped backup and enable this skill?",
+          { agent: label },
+        ),
+        confirmLabel: t("Replace and Enable"),
+        onConfirm: async () => {
+          const updated = await performDesktop(
+            () => request(true),
+            t("{agent} enabled.", { agent: label }),
+            t("Failed to update skill agent link."),
+          );
+          if (updated) {
+            await refreshSkills(true);
+          }
+        },
+      });
+      return;
+    }
+    console.error(error);
+    notify(error?.message || t("Failed to update skill agent link."), "error");
+  }
+}
+
+function isSkillAgentPathConflict(error) {
+  return String(error?.message || error || "").includes(
+    "agent skill path already exists",
+  );
+}
+
+function openSkillImportDialog(preview) {
+  state.skillImportPreview = preview;
+  state.skillImportCleanupRoot = preview.cleanupRoot || null;
+  clearFormError(elements.skillImportFormError);
+  elements.skillImportConflict.value = "rename";
+  renderSkillImportPreview();
+  openDialog(elements.skillImportDialog, elements.skillImportConflict);
+}
+
+function resetSkillImportDialog() {
+  state.skillImportPreview = null;
+  state.skillImportCleanupRoot = null;
+  clearFormError(elements.skillImportFormError);
+  elements.skillImportPreview?.replaceChildren();
+  if (elements.skillImportConflict) {
+    elements.skillImportConflict.value = "rename";
+  }
+  if (elements.skillImportSubmit) {
+    elements.skillImportSubmit.disabled = false;
+  }
+}
+
+function openSkillGitDialog() {
+  clearFormError(elements.skillGitFormError);
+  renderGitSkillCandidates();
+  openDialog(elements.skillGitDialog, elements.skillGitUrl);
+}
+
+function resetSkillGitDialog() {
+  clearFormError(elements.skillGitFormError);
+  state.skillGitCheckoutPath = null;
+  state.skillGitCandidates = [];
+  state.skillGitSelectedPaths = new Set();
+  if (elements.skillGitUrl) {
+    elements.skillGitUrl.value = "";
+  }
+  if (elements.skillGitRef) {
+    elements.skillGitRef.value = "";
+  }
+  if (elements.skillGitConflict) {
+    elements.skillGitConflict.value = "rename";
+  }
+  if (elements.skillGitScan) {
+    elements.skillGitScan.disabled = false;
+  }
+  if (elements.skillGitImportSelected) {
+    elements.skillGitImportSelected.disabled = true;
+  }
+  renderGitSkillCandidates();
+}
+
+async function scanGitSkills() {
+  const gitUrl = elements.skillGitUrl.value.trim();
+  if (!gitUrl) {
+    showFormError(elements.skillGitFormError, t("Git URL is required."));
+    return;
+  }
+  clearFormError(elements.skillGitFormError);
+  const previousCheckout = state.skillGitCheckoutPath;
+  state.skillGitCheckoutPath = null;
+  state.skillGitCandidates = [];
+  state.skillGitSelectedPaths = new Set();
+  if (previousCheckout) {
+    void cleanupGitSkillCheckout(previousCheckout);
+  }
+  renderGitSkillCandidates(t("Scanning Git repository…"));
+  elements.skillGitScan.disabled = true;
+  try {
+    const result = await invokeDesktop("scan_git_skills", {
+      request: {
+        gitUrl,
+        gitRef: normalizeOptional(elements.skillGitRef.value),
+      },
+    });
+    state.skillGitCheckoutPath = result.checkoutPath;
+    state.skillGitCandidates = result.candidates || [];
+    state.skillGitSelectedPaths = new Set(
+      state.skillGitCandidates.map((candidate) => candidate.sourcePath),
+    );
+    renderGitSkillCandidates();
+    notify(
+      t("Git scan found {count} skill(s).", {
+        count: state.skillGitCandidates.length,
+      }),
+      "success",
+    );
+  } catch (error) {
+    console.error(error);
+    state.skillGitCheckoutPath = null;
+    state.skillGitCandidates = [];
+    state.skillGitSelectedPaths = new Set();
+    renderGitSkillCandidates();
+    showFormError(elements.skillGitFormError, error);
+  } finally {
+    elements.skillGitScan.disabled = false;
+  }
+}
+
+async function cleanupGitSkillCheckout(checkoutPath) {
+  if (!checkoutPath || !hasDesktopIntegration()) {
+    return;
+  }
+  try {
+    await invokeDesktop("cleanup_git_skill_checkout", { checkoutPath });
+  } catch (error) {
+    console.warn("Failed to cleanup Git skill checkout.", error);
+  }
+}
+
+async function importSelectedGitSkills() {
+  const selected = state.skillGitCandidates.filter((candidate) =>
+    state.skillGitSelectedPaths.has(candidate.sourcePath),
+  );
+  if (!selected.length) {
+    showFormError(
+      elements.skillGitFormError,
+      t("Select at least one skill to import."),
+    );
+    return;
+  }
+  clearFormError(elements.skillGitFormError);
+  elements.skillGitImportSelected.disabled = true;
+  elements.skillGitScan.disabled = true;
+  try {
+    const conflictStrategy = elements.skillGitConflict?.value || "rename";
+    const imported = [];
+    for (const candidate of selected) {
+      imported.push(
+        await invokeDesktop("import_skill", {
+          request: {
+            sourcePath: candidate.sourcePath,
+            targetSource: "local-store",
+            conflictStrategy,
+            cleanupRoot: null,
+          },
+        }),
+      );
+    }
+    const checkoutPath = state.skillGitCheckoutPath;
+    closeSkillGitDialog();
+    if (checkoutPath) {
+      await cleanupGitSkillCheckout(checkoutPath);
+    }
+    state.skillSourceFilter = "local-store";
+    await refreshSkills(true);
+    notify(t("Imported {count} skill(s).", { count: imported.length }), "success");
+  } catch (error) {
+    console.error(error);
+    showFormError(elements.skillGitFormError, error);
+  } finally {
+    elements.skillGitImportSelected.disabled =
+      !state.skillGitCandidates.length || state.skillGitSelectedPaths.size === 0;
+    elements.skillGitScan.disabled = false;
+  }
+}
+
+function renderGitSkillCandidates(message = "") {
+  if (!elements.skillGitResult) {
+    return;
+  }
+  if (elements.skillGitImportSelected) {
+    elements.skillGitImportSelected.disabled =
+      !state.skillGitCandidates.length || state.skillGitSelectedPaths.size === 0;
+  }
+  if (message) {
+    elements.skillGitResult.replaceChildren(emptyNode(message));
+    return;
+  }
+  if (!state.skillGitCandidates.length) {
+    elements.skillGitResult.replaceChildren(emptyNode(t("No Git skills scanned yet.")));
+    return;
+  }
+  const items = state.skillGitCandidates.map((candidate) => {
+    const item = document.createElement("article");
+    item.className = "data-item skill-git-candidate";
+    const checked = state.skillGitSelectedPaths.has(candidate.sourcePath);
+    item.innerHTML = `
+      <div class="item-title">
+        <label class="skill-candidate-check">
+          <input type="checkbox" ${checked ? "checked" : ""} />
+          <span>
+            <strong>${escapeHtml(candidate.name)}</strong>
+            <small>${escapeHtml(candidate.description || t("No description provided."))}</small>
+          </span>
+        </label>
+        <span class="pill warm">${escapeHtml(t("Repo Path"))}: ${escapeHtml(candidate.relativePath || ".")}</span>
+      </div>
+      <div class="data-meta">
+        <span class="pill" title="${escapeHtml(candidate.sourcePath)}">${escapeHtml(truncateMiddle(candidate.sourcePath, 54))}</span>
+        <span class="pill">${escapeHtml(candidate.directoryName)}</span>
+      </div>
+    `;
+    item.querySelector("input")?.addEventListener("change", (event) => {
+      if (event.target.checked) {
+        state.skillGitSelectedPaths.add(candidate.sourcePath);
+      } else {
+        state.skillGitSelectedPaths.delete(candidate.sourcePath);
+      }
+      renderGitSkillCandidates();
+    });
+    return item;
+  });
+  elements.skillGitResult.replaceChildren(...items);
+}
+
+function renderSkillImportPreview() {
+  const preview = state.skillImportPreview;
+  if (!preview || !elements.skillImportPreview) {
+    return;
+  }
+  const rows = [
+    { label: t("Name"), value: preview.name },
+    {
+      label: t("Description"),
+      value: preview.description || t("No description provided."),
+    },
+    ...(preview.relativePath
+      ? [{ label: t("Repo Path"), value: preview.relativePath }]
+      : []),
+    { label: t("Source Directory"), value: preview.sourcePath },
+    { label: t("Definition File"), value: preview.skillFilePath },
+    { label: t("Target Directory Name"), value: preview.directoryName },
+  ];
+  const container = document.createElement("div");
+  container.className = "skill-import-preview-grid";
+  rows.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "skill-import-preview-row";
+    item.innerHTML = `
+      <span>${escapeHtml(row.label)}</span>
+      <strong title="${escapeHtml(row.value || "")}">${escapeHtml(row.value || t("Unavailable"))}</strong>
+    `;
+    container.appendChild(item);
+  });
+  elements.skillImportPreview.replaceChildren(container);
+}
+
+async function submitSkillImport() {
+  const preview = state.skillImportPreview;
+  if (!preview) {
+    showFormError(
+      elements.skillImportFormError,
+      t("Choose a local skill directory first."),
+    );
+    return;
+  }
+  clearFormError(elements.skillImportFormError);
+  elements.skillImportSubmit.disabled = true;
+  try {
+    const imported = await invokeDesktop("import_skill", {
+      request: {
+        sourcePath: preview.sourcePath,
+        targetSource: "local-store",
+        conflictStrategy: elements.skillImportConflict.value,
+        cleanupRoot: state.skillImportCleanupRoot,
+      },
+    });
+    const importedFromGit = Boolean(state.skillImportCleanupRoot);
+    closeSkillImportDialog();
+    if (importedFromGit && elements.skillGitDialog?.open) {
+      closeSkillGitDialog();
+    }
+    state.skillSourceFilter = imported.source || "local-store";
+    await refreshSkills(true);
+    notify(t("Skill imported: {name}.", { name: imported.name }), "success");
+  } catch (error) {
+    console.error(error);
+    showFormError(elements.skillImportFormError, error);
+  } finally {
+    elements.skillImportSubmit.disabled = false;
+  }
 }
 
 function renderOnboarding() {
@@ -3079,6 +3822,7 @@ function resetAccountForm() {
   setAccountApiKeyVisible(false);
   elements.accountBaseUrl.value = "";
   elements.accountDefaultModel.value = "";
+  elements.accountUseHttpProxy.checked = false;
   elements.accountNote.value = "";
   elements.accountEnabled.checked = true;
   const preferredProvider =
@@ -3115,6 +3859,7 @@ function fillAccountForm(account) {
   setAccountApiKeyVisible(false);
   elements.accountBaseUrl.value = account.baseUrl || "";
   elements.accountDefaultModel.value = account.defaultModel || "";
+  elements.accountUseHttpProxy.checked = Boolean(account.useHttpProxy);
   elements.accountNote.value = account.note || "";
   elements.accountEnabled.checked = account.enabled;
 }
@@ -3191,6 +3936,7 @@ function buildAccountPayload() {
     name,
     baseUrl,
     defaultModel,
+    useHttpProxy: elements.accountUseHttpProxy.checked,
     apiKey,
     note,
     enabled: elements.accountEnabled.checked,
@@ -3274,22 +4020,69 @@ function buildRoutePayload() {
 }
 
 function setActiveTab(tab) {
-  state.activeTab = tab;
+  const normalizedTab = normalizePrimaryTab(tab);
+  const mappedConfigSection = configSectionFromLegacyTab(tab);
+  if (mappedConfigSection) {
+    state.configSection = mappedConfigSection;
+  }
+
+  state.activeTab = normalizedTab;
   elements.tabButtons.forEach((button) => {
-    const active = button.dataset.tab === tab;
+    const active = button.dataset.tab === normalizedTab;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-selected", String(active));
   });
   elements.tabPanels.forEach((panel) => {
-    panel.classList.toggle("is-active", panel.dataset.panel === tab);
+    panel.classList.toggle("is-active", panel.dataset.panel === normalizedTab);
   });
-  if (tab === "monitor") {
+  renderConfigSections();
+
+  if (normalizedTab === "monitor") {
     void refreshMonitor(true);
-  } else if (tab === "stats") {
+  } else if (normalizedTab === "stats") {
     void refreshDailyStats(true);
-  } else if (tab === "settings") {
+  } else if (normalizedTab === "skills") {
+    void refreshSkills(true);
+  } else if (normalizedTab === "settings") {
     renderSettings();
   }
+}
+
+function setConfigSection(section) {
+  if (!["providers", "accounts", "routes"].includes(section)) {
+    return;
+  }
+  state.configSection = section;
+  if (state.activeTab !== "config") {
+    setActiveTab("config");
+    return;
+  }
+  renderConfigSections();
+}
+
+function renderConfigSections() {
+  elements.configSectionTabs.forEach((button) => {
+    const active = button.dataset.configSection === state.configSection;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  elements.configPanels.forEach((panel) => {
+    panel.classList.toggle(
+      "is-active",
+      panel.dataset.configPanel === state.configSection,
+    );
+  });
+}
+
+function normalizePrimaryTab(tab) {
+  if (tab === "onboarding") {
+    return "dashboard";
+  }
+  return configSectionFromLegacyTab(tab) ? "config" : tab;
+}
+
+function configSectionFromLegacyTab(tab) {
+  return ["providers", "accounts", "routes"].includes(tab) ? tab : null;
 }
 
 function setDaemonChip(text, tone) {
@@ -3355,12 +4148,14 @@ function renderSettings() {
     settings?.monitorBufferLimit || DEFAULT_MONITOR_BUFFER_LIMIT;
   const currentLogRetentionDays =
     settings?.logRetentionDays || DEFAULT_LOG_RETENTION_DAYS;
+  const currentHttpProxyUrl = settings?.httpProxyUrl || "";
   const currentLogsDir = settings?.logsDir || "";
   const defaultLogsDir = settings?.defaultLogsDir || "";
 
   if (!state.settingsDirty) {
     elements.settingsDaemonPort.value = String(currentPort);
     elements.settingsAllowLan.checked = allowLanAccess;
+    elements.settingsHttpProxyUrl.value = currentHttpProxyUrl;
     elements.settingsMonitorBuffer.value = String(currentMonitorBuffer);
     elements.settingsLogRetentionDays.value = String(currentLogRetentionDays);
     elements.settingsLogsDir.value = currentLogsDir;
@@ -3384,6 +4179,7 @@ function renderSettings() {
   elements.settingsDatabasePath.value = settings?.databasePath || "";
   elements.settingsDaemonPort.disabled = !enabled;
   elements.settingsAllowLan.disabled = !enabled;
+  elements.settingsHttpProxyUrl.disabled = !enabled;
   elements.settingsMonitorBuffer.disabled = !enabled;
   elements.settingsLogRetentionDays.disabled = !enabled;
   elements.settingsLogsDir.disabled = !enabled;
@@ -3426,6 +4222,18 @@ function closeAccountDialog() {
 
 function closeRouteDialog() {
   closeDialog(elements.routeDialog);
+}
+
+function closeSkillImportDialog() {
+  closeDialog(elements.skillImportDialog);
+}
+
+function closeSkillGitDialog() {
+  const checkoutPath = state.skillGitCheckoutPath;
+  closeDialog(elements.skillGitDialog);
+  if (checkoutPath) {
+    void cleanupGitSkillCheckout(checkoutPath);
+  }
 }
 
 function closeConfirmDialog() {
@@ -3597,6 +4405,19 @@ function monitorStatusTone(entry) {
     return isSuccessStatus(entry.statusCode) ? "ok" : "bad";
   }
   return entry.phase === "failed" ? "bad" : "warm";
+}
+
+function monitorNetworkPill(entry) {
+  if (entry.networkMode === "proxy") {
+    const title = entry.httpProxyUrl
+      ? ` title="${escapeHtml(entry.httpProxyUrl)}"`
+      : "";
+    return `<span class="pill warm"${title}>${escapeHtml(t("HTTP proxy"))}</span>`;
+  }
+  if (entry.networkMode === "direct") {
+    return `<span class="pill">${escapeHtml(t("direct"))}</span>`;
+  }
+  return "";
 }
 
 function monitorRequestSummary(entry) {

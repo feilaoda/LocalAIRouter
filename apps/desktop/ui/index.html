@@ -29,26 +29,10 @@
         <button
           class="tab-button"
           type="button"
-          data-tab="providers"
-          data-i18n="Providers"
+          data-tab="config"
+          data-i18n="Config"
         >
-          Providers
-        </button>
-        <button
-          class="tab-button"
-          type="button"
-          data-tab="accounts"
-          data-i18n="Accounts"
-        >
-          Accounts
-        </button>
-        <button
-          class="tab-button"
-          type="button"
-          data-tab="routes"
-          data-i18n="Routes"
-        >
-          Routes
+          Config
         </button>
         <button
           class="tab-button"
@@ -61,10 +45,10 @@
         <button
           class="tab-button"
           type="button"
-          data-tab="onboarding"
-          data-i18n="Onboarding"
+          data-tab="skills"
+          data-i18n="Skills"
         >
-          Docs
+          Skills
         </button>
         <button
           class="tab-button"
@@ -259,95 +243,134 @@
         </div>
       </section>
 
-      <section class="tab-panel" data-panel="providers">
-        <article class="panel list-panel">
+      <section class="tab-panel" data-panel="config">
+        <article class="panel list-panel config-panel">
           <div class="panel-head">
             <div>
-              <!--<p class="panel-kicker" data-i18n="Registry">Registry</p>-->
-              <h2 data-i18n="Provider Catalog">Provider Catalog</h2>
+              <h2 data-i18n="Routing Config">Routing Config</h2>
               <p
                 class="panel-copy"
-                data-i18n="Built-ins can be tuned in place. Custom providers can be edited or removed once no accounts and routes depend on them."
+                data-i18n="Manage providers, accounts, and route bindings in one place."
               >
-                Built-ins can be tuned in place. Custom providers can be edited
-                or removed once no accounts and routes depend on them.
+                Manage providers, accounts, and route bindings in one place.
               </p>
             </div>
-            <div class="panel-actions">
-              <button
-                id="open-provider-dialog"
-                type="button"
-                data-i18n="New Provider"
-              >
-                New Provider
-              </button>
-            </div>
           </div>
-          <div class="data-list" id="providers-list"></div>
-        </article>
-      </section>
 
-      <section class="tab-panel" data-panel="accounts">
-        <article class="panel list-panel">
-          <div class="panel-head">
-            <div>
-              <h2 data-i18n="Account Pool">Account Pool</h2>
-              <p
-                class="panel-copy"
-                data-i18n="Each account belongs to one provider. Disable accounts to keep them available for audit without letting routes hit them."
-              >
-                Each account belongs to one provider. Disable accounts to keep
-                them available for audit without letting routes hit them.
-              </p>
-            </div>
-            <div class="panel-actions">
-              <button
-                id="open-account-dialog"
-                type="button"
-                data-i18n="New Account"
-              >
-                New Account
-              </button>
-            </div>
+          <div
+            class="filter-strip config-subtabs"
+            id="config-section-tabs"
+            aria-label="Routing config sections"
+          >
+            <button
+              class="filter-tab is-active"
+              type="button"
+              data-config-section="providers"
+              data-i18n="Providers"
+            >
+              Providers
+            </button>
+            <button
+              class="filter-tab"
+              type="button"
+              data-config-section="accounts"
+              data-i18n="Accounts"
+            >
+              Accounts
+            </button>
+            <button
+              class="filter-tab"
+              type="button"
+              data-config-section="routes"
+              data-i18n="Routes"
+            >
+              Routes
+            </button>
           </div>
-          <div class="filter-strip" id="accounts-provider-tabs"></div>
-          <div class="data-list" id="accounts-list"></div>
-        </article>
-      </section>
 
-      <section class="tab-panel" data-panel="routes">
-        <article class="panel list-panel">
-          <div class="panel-head">
-            <div>
-              <!--<p class="panel-kicker" data-i18n="Bindings">Bindings</p>-->
-              <h2 data-i18n="Active Routes">Active Routes</h2>
-              <p
-                class="panel-copy"
-                data-i18n="Default rules appear alongside model-prefix overrides. Overrides always win when a request model matches the prefix."
-              >
-                Default rules appear alongside model-prefix overrides. Overrides
-                always win when a request model matches the prefix.
-              </p>
+          <section class="config-section is-active" data-config-panel="providers">
+            <div class="section-head">
+              <div>
+                <h3 data-i18n="Provider Catalog">Provider Catalog</h3>
+                <p
+                  class="panel-copy"
+                  data-i18n="Built-ins can be tuned in place. Custom providers can be edited or removed once no accounts and routes depend on them."
+                >
+                  Built-ins can be tuned in place. Custom providers can be edited
+                  or removed once no accounts and routes depend on them.
+                </p>
+              </div>
+              <div class="panel-actions">
+                <button
+                  id="open-provider-dialog"
+                  type="button"
+                  data-i18n="New Provider"
+                >
+                  New Provider
+                </button>
+              </div>
             </div>
-            <div class="panel-actions">
-              <button
-                id="open-route-dialog"
-                type="button"
-                data-i18n="New Route"
-              >
-                New Route
-              </button>
-              <button
-                class="ghost"
-                id="refresh-routes"
-                type="button"
-                data-i18n="Reload"
-              >
-                Reload
-              </button>
+            <div class="data-list" id="providers-list"></div>
+          </section>
+
+          <section class="config-section" data-config-panel="accounts">
+            <div class="section-head">
+              <div>
+                <h3 data-i18n="Account Pool">Account Pool</h3>
+                <p
+                  class="panel-copy"
+                  data-i18n="Each account belongs to one provider. Disable accounts to keep them available for audit without letting routes hit them."
+                >
+                  Each account belongs to one provider. Disable accounts to keep
+                  them available for audit without letting routes hit them.
+                </p>
+              </div>
+              <div class="panel-actions">
+                <button
+                  id="open-account-dialog"
+                  type="button"
+                  data-i18n="New Account"
+                >
+                  New Account
+                </button>
+              </div>
             </div>
-          </div>
-          <div class="data-list" id="routes-list"></div>
+            <div class="filter-strip" id="accounts-provider-tabs"></div>
+            <div class="data-list" id="accounts-list"></div>
+          </section>
+
+          <section class="config-section" data-config-panel="routes">
+            <div class="section-head">
+              <div>
+                <h3 data-i18n="Active Routes">Active Routes</h3>
+                <p
+                  class="panel-copy"
+                  data-i18n="Default rules appear alongside model-prefix overrides. Overrides always win when a request model matches the prefix."
+                >
+                  Default rules appear alongside model-prefix overrides. Overrides
+                  always win when a request model matches the prefix.
+                </p>
+              </div>
+              <div class="panel-actions">
+                <button
+                  id="open-route-dialog"
+                  type="button"
+                  data-i18n="New Route"
+                >
+                  New Route
+                </button>
+                <button
+                  class="ghost"
+                  id="refresh-routes"
+                  type="button"
+                  data-i18n="Reload"
+                >
+                  Reload
+                </button>
+              </div>
+            </div>
+            <div class="data-list" id="routes-list"></div>
+          </section>
         </article>
       </section>
 
@@ -452,6 +475,69 @@
         </article>
       </section>
 
+      <section class="tab-panel" data-panel="skills">
+        <article class="panel list-panel">
+          <div class="panel-head">
+            <div>
+              <h2 data-i18n="Skills Manager">Skills Manager</h2>
+              <p
+                class="panel-copy"
+                data-i18n="Install skills into the LocalAIRouter store, expose them to agents through symlinks, and open folders when you need to edit definitions."
+              >
+                Install skills into the LocalAIRouter store, expose them to
+                agents through symlinks, and open folders when you need to edit
+                definitions.
+              </p>
+            </div>
+            <div class="panel-actions">
+              <button
+                class="ghost"
+                id="import-skill"
+                type="button"
+                data-i18n="Import Skill"
+              >
+                Import Skill
+              </button>
+              <button
+                class="ghost"
+                id="install-skill-git"
+                type="button"
+                data-i18n="Install from Git"
+              >
+                Install from Git
+              </button>
+              <button
+                class="ghost"
+                id="open-skills-root"
+                type="button"
+                data-i18n="Open Skills Root"
+              >
+                Open Skills Root
+              </button>
+              <button id="refresh-skills" type="button" data-i18n="Refresh">
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <div class="skill-search-row">
+            <label class="skill-search-field" for="skill-search">
+              <span data-i18n="Search Skills">Search Skills</span>
+              <input
+                id="skill-search"
+                type="search"
+                autocomplete="off"
+                spellcheck="false"
+                data-i18n-placeholder="Search skills by name"
+                placeholder="Search skills by name"
+              />
+            </label>
+          </div>
+          <div class="filter-strip" id="skills-source-tabs"></div>
+          <div class="data-list" id="skills-list"></div>
+        </article>
+      </section>
+
       <section class="tab-panel" data-panel="settings">
         <article class="panel">
           <div class="panel-head">
@@ -524,6 +610,28 @@
               id="settings-lan-address"
               hidden
             ></p>
+
+            <label class="field">
+              <span data-i18n="HTTP Proxy URL">HTTP Proxy URL</span>
+              <input
+                id="settings-http-proxy-url"
+                type="text"
+                placeholder="Optional. Example: http://127.0.0.1:7890"
+                data-i18n-placeholder="Optional. Example: http://127.0.0.1:7890"
+                inputmode="url"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck="false"
+              />
+            </label>
+
+            <p
+              class="compact-note"
+              data-i18n="Accounts only use this proxy when their HTTP proxy switch is enabled."
+            >
+              Accounts only use this proxy when their HTTP proxy switch is
+              enabled.
+            </p>
 
             <label class="field">
               <span data-i18n="Traffic Logs Directory"
@@ -880,6 +988,11 @@
             />
           </label>
 
+          <label class="toggle">
+            <input id="account-use-http-proxy" type="checkbox" />
+            <span data-i18n="Use HTTP Proxy">Use HTTP Proxy</span>
+          </label>
+
 
           <label class="field">
             <span data-i18n="Note">Note</span>
@@ -970,6 +1083,202 @@
       </div>
     </dialog>
 
+    <dialog class="entity-dialog medium-dialog" id="skill-git-dialog">
+      <div class="dialog-card">
+        <div class="panel-head dialog-head">
+          <div>
+            <p class="panel-kicker" data-i18n="Skills">Skills</p>
+            <h2 data-i18n="Install from Git">Install from Git</h2>
+            <p
+              class="panel-copy"
+              data-i18n="Clone a Git repository, scan for directories containing SKILL.md, then install the whole selected skill directory."
+            >
+              Clone a Git repository, scan for directories containing SKILL.md,
+              then install the whole selected skill directory.
+            </p>
+          </div>
+          <button
+            class="ghost close-dialog"
+            id="close-skill-git-dialog"
+            type="button"
+            aria-label="Close Git install dialog"
+            data-i18n-aria-label="Close Git install dialog"
+          >
+            x
+          </button>
+        </div>
+
+        <form id="skill-git-form" class="dialog-form">
+          <p
+            class="form-error"
+            id="skill-git-form-error"
+            hidden
+            role="alert"
+            aria-live="polite"
+          ></p>
+
+          <label class="field">
+            <span data-i18n="Git URL">Git URL</span>
+            <input
+              id="skill-git-url"
+              type="text"
+              placeholder="https://github.com/user/repo.git"
+              data-i18n-placeholder="https://github.com/user/repo.git"
+              inputmode="url"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </label>
+
+          <label class="field">
+            <span data-i18n="Branch or Tag">Branch or Tag</span>
+            <input
+              id="skill-git-ref"
+              type="text"
+              placeholder="Optional. Defaults to repository default branch"
+              data-i18n-placeholder="Optional. Defaults to repository default branch"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+          </label>
+
+          <p
+            class="compact-note"
+            data-i18n="Each candidate installs its entire directory, including scripts, templates, assets, and nested files."
+          >
+            Each candidate installs its entire directory, including scripts,
+            templates, assets, and nested files.
+          </p>
+
+          <label class="field">
+            <span data-i18n="If Same Directory Exists">
+              If Same Directory Exists
+            </span>
+            <select id="skill-git-conflict">
+              <option value="rename" data-i18n="Auto Rename">
+                Auto Rename
+              </option>
+              <option value="overwrite" data-i18n="Replace Existing">
+                Replace Existing
+              </option>
+              <option value="cancel" data-i18n="Cancel Import">
+                Cancel Import
+              </option>
+            </select>
+          </label>
+
+          <div class="skill-git-result" id="skill-git-result"></div>
+
+          <div class="form-actions">
+            <button
+              class="ghost"
+              id="skill-git-cancel"
+              type="button"
+              data-i18n="Cancel"
+            >
+              Cancel
+            </button>
+            <button id="skill-git-scan" type="submit" data-i18n="Scan Git">
+              Scan Git
+            </button>
+            <button
+              id="skill-git-import-selected"
+              type="button"
+              data-i18n="Import Selected"
+            >
+              Import Selected
+            </button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog class="entity-dialog medium-dialog" id="skill-import-dialog">
+      <div class="dialog-card">
+        <div class="panel-head dialog-head">
+          <div>
+            <p class="panel-kicker" data-i18n="Skills">Skills</p>
+            <h2 id="skill-import-title" data-i18n="Import Skill">
+              Import Skill
+            </h2>
+            <p
+              class="panel-copy"
+              data-i18n="Review the selected skill before installing it into a user skills directory."
+            >
+              Review the selected skill before installing it into a user skills
+              directory.
+            </p>
+          </div>
+          <button
+            class="ghost close-dialog"
+            id="close-skill-import-dialog"
+            type="button"
+            aria-label="Close skill import dialog"
+            data-i18n-aria-label="Close skill import dialog"
+          >
+            x
+          </button>
+        </div>
+
+        <form id="skill-import-form" class="dialog-form">
+          <p
+            class="form-error"
+            id="skill-import-form-error"
+            hidden
+            role="alert"
+            aria-live="polite"
+          ></p>
+
+          <div class="skill-import-preview" id="skill-import-preview"></div>
+
+          <label class="field">
+            <span data-i18n="If Same Directory Exists">
+              If Same Directory Exists
+            </span>
+            <select id="skill-import-conflict">
+              <option value="rename" data-i18n="Auto Rename">
+                Auto Rename
+              </option>
+              <option value="overwrite" data-i18n="Replace Existing">
+                Replace Existing
+              </option>
+              <option value="cancel" data-i18n="Cancel Import">
+                Cancel Import
+              </option>
+            </select>
+          </label>
+
+          <p
+            class="compact-note"
+            data-i18n="Install stores a full copy under ~/.localairouter/skills. Codex and Agents targets are symlinks to that store."
+          >
+            Install stores a full copy under ~/.localairouter/skills. Codex and
+            Agents targets are symlinks to that store.
+          </p>
+
+          <div class="form-actions">
+            <button
+              class="ghost"
+              id="skill-import-cancel"
+              type="button"
+              data-i18n="Cancel"
+            >
+              Cancel
+            </button>
+            <button
+              id="skill-import-submit"
+              type="submit"
+              data-i18n="Import Skill"
+            >
+              Import Skill
+            </button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
     <dialog class="entity-dialog medium-dialog" id="confirm-dialog">
       <div class="dialog-card">
         <div class="panel-head dialog-head">
@@ -1029,6 +1338,6 @@
       </div>
     </template>
 
-    <script type="module" src="./app.js?v=20260527-account-filter"></script>
+    <script type="module" src="./app.js?v=20260609-skill-agent-links"></script>
   </body>
 </html>

@@ -110,6 +110,66 @@ struct ClaudeConfigSyncResult {
     base_url: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillInfo {
+    id: String,
+    name: String,
+    description: String,
+    source: String,
+    source_label: String,
+    root_path: String,
+    skill_path: String,
+    skill_file_path: String,
+    updated_at: Option<String>,
+    codex_linked: bool,
+    agents_linked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillImportPreview {
+    name: String,
+    description: String,
+    source_path: String,
+    skill_file_path: String,
+    directory_name: String,
+    relative_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillImportRequest {
+    source_path: String,
+    target_source: String,
+    conflict_strategy: String,
+    cleanup_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillAgentLinkRequest {
+    skill_id: String,
+    agent: String,
+    enabled: bool,
+    #[serde(default)]
+    replace_existing: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillGitScanRequest {
+    git_url: String,
+    git_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillGitScanResult {
+    checkout_path: String,
+    candidates: Vec<SkillImportPreview>,
+}
+
 struct SpawnSpec {
     program: PathBuf,
     args: Vec<String>,
@@ -372,7 +432,15 @@ fn main() {
             import_codex_account,
             import_claude_account,
             refresh_tray_menu,
-            set_app_locale
+            set_app_locale,
+            list_skills,
+            open_skill_path,
+            open_skills_root,
+            pick_skill_import_directory,
+            import_skill,
+            scan_git_skills,
+            cleanup_git_skill_checkout,
+            set_skill_agent_link
         ])
         .setup(move |app| {
             if let Some(ui_dev_server) = &ui_dev_server {
@@ -561,6 +629,93 @@ async fn set_app_locale(
     Ok(normalized)
 }
 
+#[tauri::command]
+fn list_skills() -> std::result::Result<Vec<SkillInfo>, String> {
+    discover_skills().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn open_skill_path(skill_id: String, target: Option<String>) -> std::result::Result<(), String> {
+    let skills = discover_skills().map_err(|error| error.to_string())?;
+    let skill = skills
+        .into_iter()
+        .find(|skill| skill.id == skill_id)
+        .ok_or_else(|| format!("skill `{skill_id}` not found"))?;
+    let path = match target.as_deref() {
+        Some("file") => PathBuf::from(skill.skill_file_path),
+        _ => PathBuf::from(skill.skill_path),
+    };
+    reveal_path(path)
+}
+
+#[tauri::command]
+fn open_skills_root(source: Option<String>) -> std::result::Result<(), String> {
+    let roots = skill_roots();
+    let selected = match source.as_deref() {
+        Some(source) if !source.trim().is_empty() => roots
+            .into_iter()
+            .find(|root| root.source == source)
+            .ok_or_else(|| format!("skills root `{source}` not found"))?,
+        _ => roots
+            .iter()
+            .find(|root| root.source == "local-store")
+            .cloned()
+            .ok_or_else(|| "no skills root found".to_owned())?,
+    };
+    if !selected.path.exists() {
+        if selected.readonly {
+            return Err(format!(
+                "skills root not found: {}",
+                selected.path.display()
+            ));
+        }
+        fs::create_dir_all(&selected.path)
+            .with_context(|| format!("failed to create skills root {}", selected.path.display()))
+            .map_err(|error| error.to_string())?;
+    }
+    reveal_path(selected.path)
+}
+
+#[tauri::command]
+async fn pick_skill_import_directory() -> std::result::Result<Option<SkillImportPreview>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(path) = pick_folder_native("Select a skill directory", None)? else {
+            return Ok(None);
+        };
+        preview_skill_import_path(&PathBuf::from(path))
+            .map(Some)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn import_skill(request: SkillImportRequest) -> std::result::Result<SkillInfo, String> {
+    import_skill_from_request(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn scan_git_skills(
+    request: SkillGitScanRequest,
+) -> std::result::Result<SkillGitScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        scan_git_skills_from_request(request).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn cleanup_git_skill_checkout(checkout_path: String) -> std::result::Result<(), String> {
+    remove_git_skill_checkout_root(&checkout_path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_skill_agent_link(request: SkillAgentLinkRequest) -> std::result::Result<SkillInfo, String> {
+    set_skill_agent_link_from_request(request).map_err(|error| error.to_string())
+}
+
 fn spawn_daemon_process(log_file: &Path) -> Result<(Child, SpawnSpec)> {
     let spec = select_spawn_spec()?;
     append_supervisor_event(
@@ -734,6 +889,7 @@ fn persist_startup_env_settings_overrides() -> Result<()> {
     let input = AppSettingsInput {
         daemon_port: env_port.unwrap_or(current.daemon_port),
         allow_lan_access: env_allow_lan.unwrap_or(current.allow_lan_access),
+        http_proxy_url: current.http_proxy_url,
         monitor_buffer_limit: current.monitor_buffer_limit,
         log_retention_days: current.log_retention_days,
         logs_dir: Some(current.logs_dir),
@@ -828,6 +984,915 @@ fn import_claude_account_from_disk() -> Result<AccountInput> {
     let current = fs::read_to_string(&config_path)
         .with_context(|| format!("failed to read {}", config_path.display()))?;
     import_claude_account_contents(&current)
+}
+
+#[derive(Debug, Clone)]
+struct SkillRoot {
+    source: String,
+    source_label: String,
+    path: PathBuf,
+    readonly: bool,
+    link_target: bool,
+}
+
+fn skill_roots() -> Vec<SkillRoot> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    vec![
+        SkillRoot {
+            source: "local-store".into(),
+            source_label: "Local Store".into(),
+            path: localairouter_skills_root(),
+            readonly: false,
+            link_target: false,
+        },
+        SkillRoot {
+            source: "codex-user".into(),
+            source_label: "Codex Link".into(),
+            path: home.join(".codex").join("skills"),
+            readonly: false,
+            link_target: true,
+        },
+        SkillRoot {
+            source: "codex-system".into(),
+            source_label: "Codex System".into(),
+            path: home.join(".codex").join("skills").join(".system"),
+            readonly: true,
+            link_target: false,
+        },
+        SkillRoot {
+            source: "agents-user".into(),
+            source_label: "Agents Link".into(),
+            path: home.join(".agents").join("skills"),
+            readonly: false,
+            link_target: true,
+        },
+    ]
+}
+
+fn localairouter_skills_root() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".localairouter")
+        .join("skills")
+}
+
+fn discover_skills() -> Result<Vec<SkillInfo>> {
+    let mut skills = Vec::new();
+    for root in skill_roots() {
+        if root.path.exists() {
+            collect_skills_from_root(&root, &mut skills)?;
+        }
+    }
+    skills.sort_by(|left, right| {
+        left.source_label
+            .cmp(&right.source_label)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    skills.dedup_by(|left, right| left.skill_file_path == right.skill_file_path);
+    Ok(skills)
+}
+
+fn collect_skills_from_root(root: &SkillRoot, skills: &mut Vec<SkillInfo>) -> Result<()> {
+    let entries = fs::read_dir(&root.path)
+        .with_context(|| format!("failed to read skills root {}", root.path.display()))?;
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", root.path.display()))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if root.link_target && is_managed_agent_skill_link(&path) {
+            continue;
+        }
+        if root.source != "codex-system"
+            && path.file_name().and_then(|name| name.to_str()) == Some(".system")
+        {
+            continue;
+        }
+        let skill_file = path.join("SKILL.md");
+        if !skill_file.exists() {
+            continue;
+        }
+        skills.push(build_skill_info(root, &path)?);
+    }
+    Ok(())
+}
+
+fn build_skill_info(root: &SkillRoot, path: &Path) -> Result<SkillInfo> {
+    let skill_file = path.join("SKILL.md");
+    let contents = fs::read_to_string(&skill_file)
+        .with_context(|| format!("failed to read {}", skill_file.display()))?;
+    let (name, description) = parse_skill_frontmatter(&contents);
+    let fallback_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("skill")
+        .to_owned();
+    let name = name.unwrap_or_else(|| fallback_name.clone());
+    let updated_at = fs::metadata(&skill_file)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(system_time_to_rfc3339);
+    Ok(SkillInfo {
+        id: format!("{}:{}", root.source, fallback_name),
+        name,
+        description: description.unwrap_or_default(),
+        source: root.source.clone(),
+        source_label: root.source_label.clone(),
+        root_path: root.path.to_string_lossy().into_owned(),
+        skill_path: path.to_string_lossy().into_owned(),
+        skill_file_path: skill_file.to_string_lossy().into_owned(),
+        updated_at,
+        codex_linked: root.source == "local-store"
+            && is_local_skill_linked_to_agent(path, "codex-user"),
+        agents_linked: root.source == "local-store"
+            && is_local_skill_linked_to_agent(path, "agents-user"),
+    })
+}
+
+fn is_managed_agent_skill_link(path: &Path) -> bool {
+    if !is_symlink(path) {
+        return false;
+    }
+    path.canonicalize()
+        .map(|target| target.starts_with(localairouter_skills_root()))
+        .unwrap_or(false)
+}
+
+fn is_local_skill_linked_to_agent(store_path: &Path, agent_source: &str) -> bool {
+    let Some(agent_root) = skill_roots()
+        .into_iter()
+        .find(|root| root.source == agent_source)
+    else {
+        return false;
+    };
+    find_agent_link_for_store_skill(store_path, &agent_root).is_some()
+}
+
+fn find_agent_link_for_store_skill(store_path: &Path, agent_root: &SkillRoot) -> Option<PathBuf> {
+    let entries = fs::read_dir(&agent_root.path).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if is_symlink_to(&path, store_path) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn preview_skill_import_path(path: &Path) -> Result<SkillImportPreview> {
+    let source = path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", path.display()))?;
+    if !source.is_dir() {
+        anyhow::bail!("selected path is not a directory: {}", source.display());
+    }
+    let skill_file = source.join("SKILL.md");
+    if !skill_file.exists() {
+        anyhow::bail!(
+            "selected directory does not contain SKILL.md: {}",
+            source.display()
+        );
+    }
+    let contents = fs::read_to_string(&skill_file)
+        .with_context(|| format!("failed to read {}", skill_file.display()))?;
+    let (name, description) = parse_skill_frontmatter(&contents);
+    let directory_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(sanitize_skill_directory_name)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| {
+            sanitize_skill_directory_name(name.as_deref().unwrap_or("imported-skill"))
+        });
+    Ok(SkillImportPreview {
+        name: name.unwrap_or_else(|| directory_name.clone()),
+        description: description.unwrap_or_default(),
+        source_path: source.to_string_lossy().into_owned(),
+        skill_file_path: skill_file.to_string_lossy().into_owned(),
+        directory_name,
+        relative_path: None,
+    })
+}
+
+fn import_skill_from_request(request: SkillImportRequest) -> Result<SkillInfo> {
+    let preview = preview_skill_import_path(Path::new(&request.source_path))?;
+    let store_root = skill_roots()
+        .into_iter()
+        .find(|root| root.source == "local-store")
+        .context("local skill store root not found")?;
+    fs::create_dir_all(&store_root.path).with_context(|| {
+        format!(
+            "failed to create local skills store {}",
+            store_root.path.display()
+        )
+    })?;
+
+    let source = PathBuf::from(&preview.source_path);
+    let mut store_target = store_root.path.join(&preview.directory_name);
+    let conflict_strategy = request.conflict_strategy.trim();
+    if store_target.exists() {
+        let same_directory = source.canonicalize().ok() == store_target.canonicalize().ok();
+        match conflict_strategy {
+            "overwrite" if same_directory => {}
+            "overwrite" => {
+                fs::remove_dir_all(&store_target)
+                    .with_context(|| format!("failed to remove {}", store_target.display()))?;
+                copy_dir_recursive(&source, &store_target).with_context(|| {
+                    format!("failed to import skill into {}", store_target.display())
+                })?;
+            }
+            "cancel" => {
+                anyhow::bail!("skill already exists at {}", store_target.display());
+            }
+            _ => {
+                store_target = unique_skill_target_path(&store_root.path, &preview.directory_name);
+                copy_dir_recursive(&source, &store_target).with_context(|| {
+                    format!("failed to import skill into {}", store_target.display())
+                })?;
+            }
+        }
+    } else {
+        copy_dir_recursive(&source, &store_target)
+            .with_context(|| format!("failed to import skill into {}", store_target.display()))?;
+    }
+
+    let target_root = skill_roots()
+        .into_iter()
+        .find(|root| root.source == request.target_source)
+        .with_context(|| format!("skills root `{}` not found", request.target_source))?;
+    if target_root.readonly {
+        anyhow::bail!("system skills cannot be modified");
+    }
+    let info = if target_root.link_target {
+        let link_path = link_skill_into_agent_root(&store_target, &target_root, conflict_strategy)?;
+        build_skill_info(&target_root, &link_path)?
+    } else {
+        build_skill_info(&store_root, &store_target)?
+    };
+    cleanup_skill_import_root(request.cleanup_root.as_deref(), &source)?;
+    Ok(info)
+}
+
+fn set_skill_agent_link_from_request(request: SkillAgentLinkRequest) -> Result<SkillInfo> {
+    let store_root = skill_roots()
+        .into_iter()
+        .find(|root| root.source == "local-store")
+        .context("local skill store root not found")?;
+    let (_, directory_name) = request
+        .skill_id
+        .split_once(':')
+        .context("invalid skill id")?;
+    if request.skill_id.split_once(':').map(|(source, _)| source) != Some("local-store")
+        || directory_name.contains('/')
+        || directory_name.contains('\\')
+        || directory_name == "."
+        || directory_name == ".."
+        || directory_name.contains("..")
+    {
+        anyhow::bail!("agent links can only be toggled for local store skills");
+    }
+    let store_path = store_root.path.join(directory_name);
+    if !store_path.join("SKILL.md").exists() {
+        anyhow::bail!("local skill `{}` was not found", request.skill_id);
+    }
+
+    let agent_source = match request.agent.as_str() {
+        "codex" | "codex-user" => "codex-user",
+        "agents" | "agents-user" => "agents-user",
+        other => anyhow::bail!("unsupported skill agent `{other}`"),
+    };
+    let agent_root = skill_roots()
+        .into_iter()
+        .find(|root| root.source == agent_source)
+        .with_context(|| format!("skills root `{agent_source}` not found"))?;
+    if request.enabled {
+        let strategy = if request.replace_existing {
+            "backup-replace"
+        } else {
+            "cancel"
+        };
+        link_skill_into_agent_root(&store_path, &agent_root, strategy)?;
+    } else {
+        unlink_skill_from_agent_root(&store_path, &agent_root)?;
+    }
+    build_skill_info(&store_root, &store_path)
+}
+
+fn unique_skill_target_path(root: &Path, directory_name: &str) -> PathBuf {
+    let base = sanitize_skill_directory_name(directory_name);
+    let mut index = 2;
+    loop {
+        let candidate = root.join(format!("{base}-{index}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn link_skill_into_agent_root(
+    store_target: &Path,
+    target_root: &SkillRoot,
+    conflict_strategy: &str,
+) -> Result<PathBuf> {
+    fs::create_dir_all(&target_root.path).with_context(|| {
+        format!(
+            "failed to create skills root {}",
+            target_root.path.display()
+        )
+    })?;
+    let directory_name = store_target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("skill store target has no directory name")?;
+    if let Some(existing) = find_agent_link_for_store_skill(store_target, target_root) {
+        return Ok(existing);
+    }
+    let mut link_path = target_root.path.join(directory_name);
+    if link_path.exists() || fs::symlink_metadata(&link_path).is_ok() {
+        match conflict_strategy {
+            "overwrite" if is_symlink(&link_path) => {
+                fs::remove_file(&link_path)
+                    .with_context(|| format!("failed to remove {}", link_path.display()))?;
+            }
+            "backup-replace" => {
+                let backup_path = backup_existing_agent_skill_path(&link_path)?;
+                fs::rename(&link_path, &backup_path).with_context(|| {
+                    format!(
+                        "failed to backup {} to {}",
+                        link_path.display(),
+                        backup_path.display()
+                    )
+                })?;
+            }
+            "overwrite" => {
+                anyhow::bail!(
+                    "refusing to replace non-symlink agent skill path {}",
+                    link_path.display()
+                );
+            }
+            "cancel" => {
+                anyhow::bail!("agent skill path already exists at {}", link_path.display());
+            }
+            _ => {
+                link_path = unique_skill_target_path(&target_root.path, directory_name);
+            }
+        }
+    }
+    create_dir_symlink(store_target, &link_path)?;
+    Ok(link_path)
+}
+
+fn unlink_skill_from_agent_root(store_target: &Path, target_root: &SkillRoot) -> Result<()> {
+    let Some(link_path) = find_agent_link_for_store_skill(store_target, target_root) else {
+        return Ok(());
+    };
+    fs::remove_file(&link_path).with_context(|| format!("failed to remove {}", link_path.display()))
+}
+
+fn backup_existing_agent_skill_path(path: &Path) -> Result<PathBuf> {
+    let parent = path
+        .parent()
+        .context("agent skill path has no parent directory")?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("agent skill path has no file name")?;
+    let timestamp = Utc::now().format("%Y%m%d%H%M%S");
+    let mut candidate = parent.join(format!("{name}.backup-{timestamp}"));
+    let mut index = 2;
+    while candidate.exists() || fs::symlink_metadata(&candidate).is_ok() {
+        candidate = parent.join(format!("{name}.backup-{timestamp}-{index}"));
+        index += 1;
+    }
+    Ok(candidate)
+}
+
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+fn is_symlink_to(path: &Path, target: &Path) -> bool {
+    if !is_symlink(path) {
+        return false;
+    }
+    match (path.canonicalize(), target.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+#[cfg(unix)]
+fn create_dir_symlink(target: &Path, link_path: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(target, link_path).with_context(|| {
+        format!(
+            "failed to link {} -> {}",
+            link_path.display(),
+            target.display()
+        )
+    })
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(target: &Path, link_path: &Path) -> Result<()> {
+    std::os::windows::fs::symlink_dir(target, link_path).with_context(|| {
+        format!(
+            "failed to link {} -> {}",
+            link_path.display(),
+            target.display()
+        )
+    })
+}
+
+fn scan_git_skills_from_request(request: SkillGitScanRequest) -> Result<SkillGitScanResult> {
+    let git_url = request.git_url.trim();
+    if git_url.is_empty() {
+        anyhow::bail!("Git URL is required.");
+    }
+    let checkout_path = create_git_skill_checkout_dir()?;
+    if let Err(error) = clone_skill_repo(git_url, request.git_ref.as_deref(), &checkout_path) {
+        let _ = fs::remove_dir_all(&checkout_path);
+        return Err(error);
+    }
+    let candidates = match scan_skill_candidates_in_checkout(&checkout_path) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&checkout_path);
+            return Err(error);
+        }
+    };
+    if candidates.is_empty() {
+        let _ = fs::remove_dir_all(&checkout_path);
+        anyhow::bail!("no SKILL.md files found in Git repository");
+    }
+    Ok(SkillGitScanResult {
+        checkout_path: checkout_path.to_string_lossy().into_owned(),
+        candidates,
+    })
+}
+
+fn create_git_skill_checkout_dir() -> Result<PathBuf> {
+    let base = git_skill_checkout_base_dir();
+    fs::create_dir_all(&base).with_context(|| format!("failed to create {}", base.display()))?;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let path = base.join(format!("checkout-{}-{now}", std::process::id()));
+    fs::create_dir_all(&path).with_context(|| format!("failed to create {}", path.display()))?;
+    Ok(path)
+}
+
+fn git_skill_checkout_base_dir() -> PathBuf {
+    env::temp_dir().join("localairouter-git-skills")
+}
+
+fn clone_skill_repo(git_url: &str, git_ref: Option<&str>, checkout_path: &Path) -> Result<()> {
+    let mut failures = Vec::new();
+
+    match run_git_clone(git_url, git_ref, checkout_path, false) {
+        Ok(()) => return Ok(()),
+        Err(error) => failures.push(format!("git clone: {error}")),
+    }
+
+    match run_git_clone(git_url, git_ref, checkout_path, true) {
+        Ok(()) => return Ok(()),
+        Err(error) => failures.push(format!("git clone with HTTP/1.1: {error}")),
+    }
+
+    if let Some(repo) = parse_github_repo_url(git_url) {
+        match checkout_github_archive(&repo, git_ref, checkout_path) {
+            Ok(()) => return Ok(()),
+            Err(error) => failures.push(format!("GitHub zip fallback: {error}")),
+        }
+    }
+
+    anyhow::bail!(
+        "failed to checkout Git repository:\n- {}",
+        failures.join("\n- ")
+    )
+}
+
+fn run_git_clone(
+    git_url: &str,
+    git_ref: Option<&str>,
+    checkout_path: &Path,
+    force_http1: bool,
+) -> std::result::Result<(), String> {
+    reset_empty_checkout_dir(checkout_path)
+        .map_err(|error| format!("failed to prepare checkout directory: {error}"))?;
+    let mut command = Command::new("git");
+    if force_http1 {
+        command.arg("-c").arg("http.version=HTTP/1.1");
+    }
+    command.arg("clone").arg("--depth").arg("1");
+    let git_ref = git_ref.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(git_ref) = git_ref {
+        command.arg("--branch").arg(git_ref);
+    }
+    command.arg(git_url).arg(checkout_path);
+    run_command_capture(&mut command)
+}
+
+fn run_command_capture(command: &mut Command) -> std::result::Result<(), String> {
+    let output = command
+        .output()
+        .map_err(|error| format!("failed to run command: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let message = if stderr.is_empty() { stdout } else { stderr };
+    if message.is_empty() {
+        Err(format!("exited with status {}", output.status))
+    } else {
+        Err(message)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GitHubRepo {
+    owner: String,
+    repo: String,
+}
+
+fn parse_github_repo_url(value: &str) -> Option<GitHubRepo> {
+    let mut rest = value.trim().trim_end_matches('/').to_owned();
+    if let Some(stripped) = rest.strip_prefix("https://github.com/") {
+        rest = stripped.to_owned();
+    } else if let Some(stripped) = rest.strip_prefix("http://github.com/") {
+        rest = stripped.to_owned();
+    } else if let Some(stripped) = rest.strip_prefix("git://github.com/") {
+        rest = stripped.to_owned();
+    } else if let Some(stripped) = rest.strip_prefix("ssh://git@github.com/") {
+        rest = stripped.to_owned();
+    } else if let Some(stripped) = rest.strip_prefix("git@github.com:") {
+        rest = stripped.to_owned();
+    } else {
+        return None;
+    }
+    let mut segments = rest.split('/');
+    let owner = segments.next()?.trim();
+    let repo = segments.next()?.trim().trim_end_matches(".git");
+    if owner.is_empty()
+        || repo.is_empty()
+        || owner.contains("..")
+        || repo.contains("..")
+        || owner.contains('\\')
+        || repo.contains('\\')
+    {
+        return None;
+    }
+    Some(GitHubRepo {
+        owner: owner.to_owned(),
+        repo: repo.to_owned(),
+    })
+}
+
+fn checkout_github_archive(
+    repo: &GitHubRepo,
+    git_ref: Option<&str>,
+    checkout_path: &Path,
+) -> Result<()> {
+    let zip_path = checkout_path.with_extension("zip");
+    let archive_dir = checkout_path.with_extension("archive");
+    let mut failures = Vec::new();
+
+    for url in github_archive_urls(repo, git_ref) {
+        reset_empty_checkout_dir(checkout_path)?;
+        let _ = fs::remove_file(&zip_path);
+        let _ = fs::remove_dir_all(&archive_dir);
+        match download_github_archive(&url, &zip_path)
+            .and_then(|_| extract_zip_archive(&zip_path, &archive_dir))
+            .and_then(|_| materialize_github_archive_checkout(&archive_dir, checkout_path))
+        {
+            Ok(()) => {
+                let _ = fs::remove_file(&zip_path);
+                let _ = fs::remove_dir_all(&archive_dir);
+                return Ok(());
+            }
+            Err(error) => {
+                failures.push(format!("{url}: {error}"));
+            }
+        }
+    }
+
+    let _ = fs::remove_file(&zip_path);
+    let _ = fs::remove_dir_all(&archive_dir);
+    anyhow::bail!("{}", failures.join("\n"))
+}
+
+fn github_archive_urls(repo: &GitHubRepo, git_ref: Option<&str>) -> Vec<String> {
+    let base = format!("https://github.com/{}/{}", repo.owner, repo.repo);
+    let git_ref = git_ref.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(git_ref) = git_ref {
+        return vec![
+            format!("{base}/archive/refs/heads/{git_ref}.zip"),
+            format!("{base}/archive/refs/tags/{git_ref}.zip"),
+            format!("{base}/archive/{git_ref}.zip"),
+        ];
+    }
+    vec![
+        format!("{base}/archive/HEAD.zip"),
+        format!("{base}/archive/refs/heads/main.zip"),
+        format!("{base}/archive/refs/heads/master.zip"),
+    ]
+}
+
+fn download_github_archive(url: &str, zip_path: &Path) -> Result<()> {
+    let mut command = Command::new("curl");
+    command
+        .arg("-L")
+        .arg("--fail")
+        .arg("--silent")
+        .arg("--show-error")
+        .arg("--connect-timeout")
+        .arg("20")
+        .arg("--max-time")
+        .arg("180")
+        .arg("--output")
+        .arg(zip_path)
+        .arg(url);
+    run_command_capture(&mut command).map_err(|error| anyhow::anyhow!("curl failed: {error}"))
+}
+
+fn extract_zip_archive(zip_path: &Path, archive_dir: &Path) -> Result<()> {
+    fs::create_dir_all(archive_dir)
+        .with_context(|| format!("failed to create {}", archive_dir.display()))?;
+
+    let mut ditto = Command::new("ditto");
+    ditto.arg("-x").arg("-k").arg(zip_path).arg(archive_dir);
+    match run_command_capture(&mut ditto) {
+        Ok(()) => return Ok(()),
+        Err(ditto_error) => {
+            let _ = fs::remove_dir_all(archive_dir);
+            fs::create_dir_all(archive_dir)
+                .with_context(|| format!("failed to recreate {}", archive_dir.display()))?;
+            let mut unzip = Command::new("unzip");
+            unzip.arg("-q").arg(zip_path).arg("-d").arg(archive_dir);
+            run_command_capture(&mut unzip).map_err(|unzip_error| {
+                anyhow::anyhow!("ditto failed: {ditto_error}; unzip failed: {unzip_error}")
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn materialize_github_archive_checkout(archive_dir: &Path, checkout_path: &Path) -> Result<()> {
+    let mut entries = fs::read_dir(archive_dir)
+        .with_context(|| format!("failed to read {}", archive_dir.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect::<Vec<_>>();
+    entries.sort();
+    let archive_root = if entries.len() == 1 && entries[0].is_dir() {
+        entries.remove(0)
+    } else {
+        archive_dir.to_path_buf()
+    };
+    copy_dir_contents(&archive_root, checkout_path)
+}
+
+fn copy_dir_contents(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)
+        .with_context(|| format!("failed to create directory {}", target.display()))?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", source.display()))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&source_path)
+            .with_context(|| format!("failed to stat {}", source_path.display()))?;
+        if metadata.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn reset_empty_checkout_dir(path: &Path) -> Result<()> {
+    if path.exists() {
+        fs::remove_dir_all(path).with_context(|| format!("failed to remove {}", path.display()))?;
+    }
+    fs::create_dir_all(path).with_context(|| format!("failed to create {}", path.display()))
+}
+
+fn scan_skill_candidates_in_checkout(checkout_path: &Path) -> Result<Vec<SkillImportPreview>> {
+    let checkout = checkout_path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", checkout_path.display()))?;
+    let mut candidates = Vec::new();
+    if checkout.join("SKILL.md").exists() {
+        candidates.push(checkout.clone());
+    }
+    collect_skill_candidate_paths(&checkout, &mut candidates)?;
+    candidates.sort();
+    candidates.dedup();
+    candidates
+        .into_iter()
+        .map(|path| {
+            let mut preview = preview_skill_import_path(&path)?;
+            preview.relative_path = path
+                .strip_prefix(&checkout)
+                .ok()
+                .map(|relative| relative.to_string_lossy().into_owned())
+                .filter(|relative| !relative.is_empty())
+                .or_else(|| Some(".".to_owned()));
+            Ok(preview)
+        })
+        .collect()
+}
+
+fn collect_skill_candidate_paths(path: &Path, candidates: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(path).with_context(|| format!("failed to read {}", path.display()))? {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", path.display()))?;
+        let entry_path = entry.path();
+        let file_name = entry.file_name();
+        if file_name.to_string_lossy() == ".git" {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&entry_path)
+            .with_context(|| format!("failed to stat {}", entry_path.display()))?;
+        if metadata.is_dir() {
+            if entry_path.join("SKILL.md").exists() {
+                candidates.push(entry_path);
+            } else {
+                collect_skill_candidate_paths(&entry_path, candidates)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_skill_import_root(cleanup_root: Option<&str>, imported_source: &Path) -> Result<()> {
+    let Some(cleanup_root) = cleanup_root
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let cleanup_root = PathBuf::from(cleanup_root)
+        .canonicalize()
+        .with_context(|| format!("failed to resolve cleanup root {cleanup_root}"))?;
+    let allowed_root = git_skill_checkout_base_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| git_skill_checkout_base_dir());
+    if !cleanup_root.starts_with(&allowed_root) {
+        anyhow::bail!(
+            "refusing to cleanup non-temporary path {}",
+            cleanup_root.display()
+        );
+    }
+    if !imported_source
+        .canonicalize()
+        .unwrap_or_else(|_| imported_source.to_path_buf())
+        .starts_with(&cleanup_root)
+    {
+        anyhow::bail!(
+            "refusing to cleanup unrelated path {}",
+            cleanup_root.display()
+        );
+    }
+    remove_git_skill_checkout_path(&cleanup_root)?;
+    Ok(())
+}
+
+fn remove_git_skill_checkout_root(cleanup_root: &str) -> Result<()> {
+    let cleanup_root = cleanup_root.trim();
+    if cleanup_root.is_empty() {
+        return Ok(());
+    }
+    let cleanup_root = PathBuf::from(cleanup_root);
+    if !cleanup_root.exists() {
+        return Ok(());
+    }
+    let cleanup_root = cleanup_root
+        .canonicalize()
+        .with_context(|| format!("failed to resolve cleanup root {}", cleanup_root.display()))?;
+    let allowed_root = git_skill_checkout_base_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| git_skill_checkout_base_dir());
+    if !cleanup_root.starts_with(&allowed_root) {
+        anyhow::bail!(
+            "refusing to cleanup non-temporary path {}",
+            cleanup_root.display()
+        );
+    }
+    remove_git_skill_checkout_path(&cleanup_root)?;
+    Ok(())
+}
+
+fn remove_git_skill_checkout_path(cleanup_root: &Path) -> Result<()> {
+    if cleanup_root.exists() {
+        fs::remove_dir_all(cleanup_root)
+            .with_context(|| format!("failed to remove {}", cleanup_root.display()))?;
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)
+        .with_context(|| format!("failed to create directory {}", target.display()))?;
+    for entry in
+        fs::read_dir(source).with_context(|| format!("failed to read {}", source.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("failed to read entry under {}", source.display()))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let metadata = fs::symlink_metadata(&source_path)
+            .with_context(|| format!("failed to stat {}", source_path.display()))?;
+        if metadata.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if metadata.is_file() {
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "failed to copy {} to {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn sanitize_skill_directory_name(value: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_dash = false;
+        } else if matches!(ch, '-' | '_' | ' ' | '.') && !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_owned();
+    if trimmed.is_empty() {
+        "skill".to_owned()
+    } else {
+        trimmed
+    }
+}
+
+fn parse_skill_frontmatter(contents: &str) -> (Option<String>, Option<String>) {
+    let trimmed = contents.trim_start();
+    let Some(rest) = trimmed.strip_prefix("---") else {
+        return (None, None);
+    };
+    let Some((frontmatter, _body)) = rest.split_once("\n---") else {
+        return (None, None);
+    };
+    let mut name = None;
+    let mut description = None;
+    for line in frontmatter.lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = unquote_frontmatter_value(value.trim());
+        match key.trim() {
+            "name" if !value.is_empty() => name = Some(value),
+            "description" if !value.is_empty() => description = Some(value),
+            _ => {}
+        }
+    }
+    (name, description)
+}
+
+fn unquote_frontmatter_value(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        let quoted = (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'');
+        if quoted {
+            return value[1..value.len() - 1].to_owned();
+        }
+    }
+    value.to_owned()
+}
+
+fn system_time_to_rfc3339(time: SystemTime) -> Option<String> {
+    let duration = time.duration_since(UNIX_EPOCH).ok()?;
+    chrono::DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, duration.subsec_nanos())
+        .map(|time| time.to_rfc3339())
 }
 
 fn sync_codex_config_contents(
@@ -968,6 +2033,7 @@ fn import_codex_account_contents(current: &str, auth_json: Option<&str>) -> Resu
         base_url,
         default_model: None,
         converter: AccountConverter::None,
+        use_http_proxy: false,
         api_key: Some(api_key),
         note: None,
         enabled: true,
@@ -1008,6 +2074,7 @@ fn import_claude_account_contents(current: &str) -> Result<AccountInput> {
         base_url,
         default_model: None,
         converter: AccountConverter::None,
+        use_http_proxy: false,
         api_key: Some(api_key),
         note: None,
         enabled: true,
@@ -2371,6 +3438,13 @@ fn reveal_path(path: PathBuf) -> std::result::Result<(), String> {
 fn pick_logs_directory_native(
     initial_path: Option<String>,
 ) -> std::result::Result<Option<String>, String> {
+    pick_folder_native("Select traffic logs directory", initial_path)
+}
+
+fn pick_folder_native(
+    prompt: &str,
+    initial_path: Option<String>,
+) -> std::result::Result<Option<String>, String> {
     #[cfg(target_os = "macos")]
     {
         let initial_path = initial_path
@@ -2378,8 +3452,9 @@ fn pick_logs_directory_native(
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
             .filter(|path| path.exists());
-        let mut script = String::from(
-            "set chosenFolder to choose folder with prompt \"Select traffic logs directory\"",
+        let mut script = format!(
+            "set chosenFolder to choose folder with prompt \"{}\"",
+            escape_applescript_string(prompt)
         );
         if let Some(path) = initial_path {
             script.push_str(" default location POSIX file \"");
@@ -2410,6 +3485,7 @@ fn pick_logs_directory_native(
 
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = prompt;
         let _ = initial_path;
         Ok(None)
     }
@@ -2566,9 +3642,14 @@ fn timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        import_claude_account_contents, import_codex_account_contents, sync_claude_config_contents,
-        sync_codex_config_contents,
+        SkillRoot, build_skill_info, copy_dir_recursive, find_agent_link_for_store_skill,
+        import_claude_account_contents, import_codex_account_contents, link_skill_into_agent_root,
+        parse_github_repo_url, preview_skill_import_path, scan_skill_candidates_in_checkout,
+        sync_claude_config_contents, sync_codex_config_contents, unique_skill_target_path,
+        unlink_skill_from_agent_root,
     };
+    use std::fs;
+    use std::path::PathBuf;
 
     #[test]
     fn codex_sync_updates_existing_default_provider_base_url_in_place() {
@@ -2767,5 +3848,253 @@ requires_openai_auth = true
             Some("https://codex-api.packycode.com/v1")
         );
         assert_eq!(account.api_key.as_deref(), Some("sk-openai-primary"));
+    }
+
+    #[test]
+    fn skill_import_preview_and_copy_preserve_definition() {
+        let workspace = test_temp_dir("skill-import-preview-and-copy");
+        let source = workspace.join("source skill");
+        fs::create_dir_all(source.join("scripts")).expect("create source");
+        fs::write(
+            source.join("SKILL.md"),
+            r#"---
+name: "Source Skill"
+description: "A local test skill"
+---
+
+Use this skill in tests.
+"#,
+        )
+        .expect("write skill definition");
+        fs::write(source.join("scripts").join("run.sh"), "echo ok\n").expect("write nested file");
+
+        let preview = preview_skill_import_path(&source).expect("preview skill");
+        assert_eq!(preview.name, "Source Skill");
+        assert_eq!(preview.description, "A local test skill");
+        assert_eq!(preview.directory_name, "source-skill");
+
+        let target_root = workspace.join("target");
+        fs::create_dir_all(target_root.join("source-skill")).expect("create conflict");
+        let target = unique_skill_target_path(&target_root, &preview.directory_name);
+        copy_dir_recursive(&source, &target).expect("copy skill");
+
+        assert_eq!(
+            target.file_name().and_then(|name| name.to_str()),
+            Some("source-skill-2")
+        );
+        assert!(target.join("SKILL.md").exists());
+        assert!(target.join("scripts").join("run.sh").exists());
+
+        let root = SkillRoot {
+            source: "codex-user".into(),
+            source_label: "Codex Link".into(),
+            path: target_root,
+            readonly: false,
+            link_target: true,
+        };
+        let info = build_skill_info(&root, &target).expect("build skill info");
+        assert_eq!(info.name, "Source Skill");
+        assert_eq!(info.description, "A local test skill");
+
+        fs::remove_dir_all(workspace).expect("cleanup");
+    }
+
+    #[test]
+    fn git_skill_scan_finds_root_and_nested_skill_directories() {
+        let workspace = test_temp_dir("git-skill-scan");
+        fs::write(
+            workspace.join("SKILL.md"),
+            r#"---
+name: Root Skill
+description: Root description
+---
+"#,
+        )
+        .expect("write root skill");
+        let nested = workspace.join("packages").join("nested-skill");
+        fs::create_dir_all(nested.join("assets")).expect("create nested skill");
+        fs::write(
+            nested.join("SKILL.md"),
+            r#"---
+name: Nested Skill
+description: Nested description
+---
+"#,
+        )
+        .expect("write nested skill");
+        fs::write(nested.join("assets").join("template.txt"), "template").expect("write asset");
+
+        let candidates = scan_skill_candidates_in_checkout(&workspace).expect("scan checkout");
+        let names = candidates
+            .iter()
+            .map(|candidate| candidate.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"Root Skill"));
+        assert!(names.contains(&"Nested Skill"));
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.relative_path.as_deref() == Some("."))
+        );
+        assert!(
+            candidates.iter().any(
+                |candidate| candidate.relative_path.as_deref() == Some("packages/nested-skill")
+            )
+        );
+
+        fs::remove_dir_all(workspace).expect("cleanup");
+    }
+
+    #[test]
+    fn github_repo_url_parser_accepts_https_and_ssh_forms() {
+        let https = parse_github_repo_url("https://github.com/ConardLi/garden-skills/")
+            .expect("parse https url");
+        assert_eq!(https.owner, "ConardLi");
+        assert_eq!(https.repo, "garden-skills");
+
+        let ssh = parse_github_repo_url("git@github.com:ConardLi/garden-skills.git")
+            .expect("parse ssh url");
+        assert_eq!(ssh.owner, "ConardLi");
+        assert_eq!(ssh.repo, "garden-skills");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_skill_into_agent_root_points_to_store_copy() {
+        let workspace = test_temp_dir("skill-link-agent-root");
+        let store_skill = workspace.join("store").join("source-skill");
+        fs::create_dir_all(store_skill.join("assets")).expect("create store skill");
+        fs::write(
+            store_skill.join("SKILL.md"),
+            r#"---
+name: Linked Skill
+description: Linked description
+---
+"#,
+        )
+        .expect("write skill definition");
+        fs::write(store_skill.join("assets").join("template.txt"), "template")
+            .expect("write asset");
+
+        let agent_root = SkillRoot {
+            source: "codex-user".into(),
+            source_label: "Codex Link".into(),
+            path: workspace.join("codex-skills"),
+            readonly: false,
+            link_target: true,
+        };
+        let link_path =
+            link_skill_into_agent_root(&store_skill, &agent_root, "rename").expect("link skill");
+
+        assert!(link_path.join("SKILL.md").exists());
+        assert!(link_path.join("assets").join("template.txt").exists());
+        assert!(
+            fs::symlink_metadata(&link_path)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink()
+        );
+
+        fs::remove_dir_all(workspace).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_skill_into_agent_root_renames_when_real_directory_exists() {
+        let workspace = test_temp_dir("skill-link-agent-conflict");
+        let store_skill = workspace.join("store").join("source-skill");
+        fs::create_dir_all(&store_skill).expect("create store skill");
+        fs::write(
+            store_skill.join("SKILL.md"),
+            r#"---
+name: Linked Skill
+---
+"#,
+        )
+        .expect("write skill definition");
+
+        let agent_root = SkillRoot {
+            source: "agents-user".into(),
+            source_label: "Agents Link".into(),
+            path: workspace.join("agent-skills"),
+            readonly: false,
+            link_target: true,
+        };
+        fs::create_dir_all(agent_root.path.join("source-skill")).expect("create real conflict dir");
+        let link_path =
+            link_skill_into_agent_root(&store_skill, &agent_root, "rename").expect("link skill");
+
+        assert_eq!(
+            link_path.file_name().and_then(|name| name.to_str()),
+            Some("source-skill-2")
+        );
+        assert!(find_agent_link_for_store_skill(&store_skill, &agent_root).is_some());
+
+        unlink_skill_from_agent_root(&store_skill, &agent_root).expect("unlink skill");
+        assert!(find_agent_link_for_store_skill(&store_skill, &agent_root).is_none());
+        assert!(agent_root.path.join("source-skill").is_dir());
+
+        fs::remove_dir_all(workspace).expect("cleanup");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn link_skill_into_agent_root_backs_up_existing_directory_when_requested() {
+        let workspace = test_temp_dir("skill-link-agent-backup");
+        let store_skill = workspace.join("store").join("source-skill");
+        fs::create_dir_all(&store_skill).expect("create store skill");
+        fs::write(
+            store_skill.join("SKILL.md"),
+            r#"---
+name: Linked Skill
+---
+"#,
+        )
+        .expect("write skill definition");
+
+        let agent_root = SkillRoot {
+            source: "agents-user".into(),
+            source_label: "Agents Link".into(),
+            path: workspace.join("agent-skills"),
+            readonly: false,
+            link_target: true,
+        };
+        let existing = agent_root.path.join("source-skill");
+        fs::create_dir_all(&existing).expect("create real conflict dir");
+        fs::write(existing.join("old.txt"), "old").expect("write old file");
+
+        let link_path = link_skill_into_agent_root(&store_skill, &agent_root, "backup-replace")
+            .expect("link skill");
+
+        assert_eq!(link_path, existing);
+        assert!(
+            fs::symlink_metadata(&link_path)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink()
+        );
+        let backup_exists = fs::read_dir(&agent_root.path)
+            .expect("read agent root")
+            .flatten()
+            .any(|entry| {
+                let path = entry.path();
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.starts_with("source-skill.backup-"))
+                    .unwrap_or(false)
+                    && path.join("old.txt").exists()
+            });
+        assert!(backup_exists);
+
+        fs::remove_dir_all(workspace).expect("cleanup");
+    }
+
+    fn test_temp_dir(name: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("localairouter-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("create temp dir");
+        path
     }
 }

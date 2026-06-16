@@ -25,6 +25,7 @@ use crate::sqlite::{Connection, Row, SqlValue};
 
 const APP_SETTING_DAEMON_PORT_KEY: &str = "daemon_port";
 const APP_SETTING_ALLOW_LAN_ACCESS_KEY: &str = "allow_lan_access";
+const APP_SETTING_HTTP_PROXY_URL_KEY: &str = "http_proxy_url";
 const APP_SETTING_MONITOR_BUFFER_LIMIT_KEY: &str = "monitor_buffer_limit";
 const APP_SETTING_LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 const APP_SETTING_LOGS_DIR_KEY: &str = "logs_dir";
@@ -404,7 +405,7 @@ impl Repository {
     pub async fn list_accounts(&self) -> Result<Vec<Account>> {
         let db = self.db.lock().await;
         let rows = db.query(
-            "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
+            "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.use_http_proxy, a.enabled, a.note,
              a.api_key,
              a.created_at, a.updated_at
              FROM accounts a ORDER BY a.provider, a.name",
@@ -422,6 +423,7 @@ impl Repository {
         let base_url = normalize_optional_base_url(input.base_url)?;
         let default_model = normalize_optional(input.default_model);
         let converter = input.converter;
+        let use_http_proxy = input.use_http_proxy;
         let note = normalize_optional(input.note);
 
         let db = self.db.lock().await;
@@ -451,14 +453,15 @@ impl Repository {
             .unwrap_or_else(|| now.clone());
 
         db.execute(
-            "INSERT INTO accounts (id, provider, name, base_url, default_model, converter, enabled, note, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO accounts (id, provider, name, base_url, default_model, converter, use_http_proxy, enabled, note, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                provider = excluded.provider,
                name = excluded.name,
                base_url = excluded.base_url,
                default_model = excluded.default_model,
                converter = excluded.converter,
+               use_http_proxy = excluded.use_http_proxy,
                enabled = excluded.enabled,
                note = excluded.note,
                updated_at = excluded.updated_at",
@@ -472,6 +475,7 @@ impl Repository {
                     .map(SqlValue::Text)
                     .unwrap_or(SqlValue::Null),
                 SqlValue::Text(converter.as_str().into()),
+                SqlValue::Integer(i64::from(use_http_proxy)),
                 SqlValue::Integer(i64::from(input.enabled)),
                 note.clone().map(SqlValue::Text).unwrap_or(SqlValue::Null),
                 SqlValue::Text(created_at),
@@ -512,7 +516,7 @@ impl Repository {
         let db = self.db.lock().await;
         let row = db
             .query(
-                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
+                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.use_http_proxy, a.enabled, a.note,
                  a.api_key,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
@@ -854,7 +858,7 @@ impl Repository {
         let selected = pick_route(provider_slug, model, routes)?;
         let account = db
             .query(
-                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.enabled, a.note,
+                "SELECT a.id, a.provider, a.name, a.base_url, a.default_model, a.converter, a.use_http_proxy, a.enabled, a.note,
                  a.api_key,
                  a.created_at, a.updated_at
                  FROM accounts a WHERE a.id = ?",
@@ -1098,6 +1102,7 @@ fn account_from_row(row: Row) -> Result<Account> {
             .as_deref()
             .unwrap_or("none")
             .parse()?,
+        use_http_proxy: row.get_i64("use_http_proxy").unwrap_or(0) != 0,
         enabled: row.get_i64("enabled")? != 0,
         note: row.get_optional_text("note")?,
         created_at: row.get_text("created_at")?,
@@ -1336,6 +1341,12 @@ fn migrate_schema(db: &Connection, root: &Path) -> Result<()> {
     ensure_column(db, "accounts", "base_url", "TEXT")?;
     ensure_column(db, "accounts", "default_model", "TEXT")?;
     ensure_column(db, "accounts", "converter", "TEXT NOT NULL DEFAULT 'none'")?;
+    ensure_column(
+        db,
+        "accounts",
+        "use_http_proxy",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     ensure_column(db, "request_logs", "session_id", "TEXT")?;
     ensure_column(
         db,
@@ -2149,6 +2160,8 @@ fn app_settings_from_db(db: &Connection, paths: &AppPaths) -> Result<AppSettings
     let allow_lan_access = get_setting_text(db, APP_SETTING_ALLOW_LAN_ACCESS_KEY)?
         .map(|value| parse_bool_setting(&value))
         .unwrap_or(false);
+    let http_proxy_url = get_setting_text(db, APP_SETTING_HTTP_PROXY_URL_KEY)?
+        .and_then(|value| normalize_http_proxy_url(Some(value)).ok().flatten());
     let monitor_buffer_limit = get_setting_text(db, APP_SETTING_MONITOR_BUFFER_LIMIT_KEY)?
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|limit| *limit > 0)
@@ -2160,6 +2173,7 @@ fn app_settings_from_db(db: &Connection, paths: &AppPaths) -> Result<AppSettings
     Ok(AppSettings {
         daemon_port,
         allow_lan_access,
+        http_proxy_url,
         monitor_buffer_limit,
         log_retention_days,
         logs_dir: logs_dir.to_string_lossy().into_owned(),
@@ -2173,6 +2187,7 @@ fn default_app_settings(paths: &AppPaths) -> AppSettings {
     AppSettings {
         daemon_port: DEFAULT_PORT,
         allow_lan_access: false,
+        http_proxy_url: None,
         monitor_buffer_limit: DEFAULT_MONITOR_BUFFER_LIMIT,
         log_retention_days: DEFAULT_LOG_RETENTION_DAYS,
         logs_dir: default_logs_dir_for_root(&paths.root)
@@ -2206,6 +2221,7 @@ fn save_app_settings_with_db(
             "log retention days must be greater than 0".into(),
         ));
     }
+    let http_proxy_url = normalize_http_proxy_url(input.http_proxy_url.clone())?;
     let logs_dir = normalize_logs_dir_setting(&paths.root, input.logs_dir.clone())?;
     fs::create_dir_all(&logs_dir)?;
     upsert_setting_text(
@@ -2217,6 +2233,11 @@ fn save_app_settings_with_db(
         db,
         APP_SETTING_ALLOW_LAN_ACCESS_KEY,
         if input.allow_lan_access { "1" } else { "0" },
+    )?;
+    upsert_setting_text(
+        db,
+        APP_SETTING_HTTP_PROXY_URL_KEY,
+        http_proxy_url.as_deref().unwrap_or(""),
     )?;
     upsert_setting_text(
         db,
@@ -2334,6 +2355,23 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn normalize_http_proxy_url(value: Option<String>) -> Result<Option<String>> {
+    let Some(value) = normalize_optional(value) else {
+        return Ok(None);
+    };
+    if value.chars().any(char::is_whitespace) {
+        return Err(LocalAIRouterError::Validation(
+            "HTTP proxy URL cannot contain whitespace".into(),
+        ));
+    }
+    if !value.starts_with("http://") && !value.starts_with("https://") {
+        return Err(LocalAIRouterError::Validation(
+            "HTTP proxy URL must start with http:// or https://".into(),
+        ));
+    }
+    Ok(Some(value))
 }
 
 fn normalize_non_empty(field: &str, value: &str) -> Result<String> {
@@ -2468,6 +2506,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   base_url TEXT,
   default_model TEXT,
   converter TEXT NOT NULL DEFAULT 'none',
+  use_http_proxy INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL,
   note TEXT,
   api_key TEXT,
@@ -2583,6 +2622,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   base_url TEXT,
   default_model TEXT,
   converter TEXT NOT NULL DEFAULT 'none',
+  use_http_proxy INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL,
   note TEXT,
   api_key TEXT,
@@ -2787,6 +2827,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: None,
                 default_model: None,
                 converter: AccountConverter::None,
+                use_http_proxy: false,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -2801,6 +2842,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: None,
                 default_model: None,
                 converter: AccountConverter::None,
+                use_http_proxy: false,
                 api_key: Some("sk-gpt5".into()),
                 note: None,
                 enabled: true,
@@ -2837,6 +2879,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: None,
                 default_model: None,
                 converter: AccountConverter::None,
+                use_http_proxy: false,
                 api_key: Some("sk-primary".into()),
                 note: None,
                 enabled: true,
@@ -2851,6 +2894,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: None,
                 default_model: None,
                 converter: AccountConverter::None,
+                use_http_proxy: false,
                 api_key: Some("sk-backup".into()),
                 note: None,
                 enabled: true,
@@ -2924,6 +2968,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: None,
                 default_model: None,
                 converter: AccountConverter::None,
+                use_http_proxy: false,
                 api_key: Some("sk-openrouter".into()),
                 note: None,
                 enabled: true,
@@ -2968,6 +3013,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: Some("https://regional.example.com/v1/".into()),
                 default_model: None,
                 converter: AccountConverter::None,
+                use_http_proxy: false,
                 api_key: Some("sk-regional".into()),
                 note: None,
                 enabled: true,
@@ -3001,6 +3047,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: None,
                 default_model: Some("gpt-5.4".into()),
                 converter: AccountConverter::None,
+                use_http_proxy: false,
                 api_key: Some("sk-pinned".into()),
                 note: None,
                 enabled: true,
@@ -3031,6 +3078,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: Some("https://api.deepseek.com/v1".into()),
                 default_model: Some("deepseek-v4".into()),
                 converter: AccountConverter::DeepSeekV4ToOpenAi,
+                use_http_proxy: false,
                 api_key: Some("sk-deepseek".into()),
                 note: None,
                 enabled: true,
@@ -3050,6 +3098,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
                 base_url: None,
                 default_model: None,
                 converter: AccountConverter::DeepSeekV4ToOpenAi,
+                use_http_proxy: false,
                 api_key: Some("sk-invalid".into()),
                 note: None,
                 enabled: true,
@@ -3149,6 +3198,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             &AppSettingsInput {
                 daemon_port: 8412,
                 allow_lan_access: true,
+                http_proxy_url: Some("http://127.0.0.1:7890".into()),
                 monitor_buffer_limit: 512,
                 log_retention_days: 45,
                 logs_dir: Some(custom_logs.to_string_lossy().into_owned()),
@@ -3157,6 +3207,10 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
         .unwrap();
         assert_eq!(settings.daemon_port, 8412);
         assert!(settings.allow_lan_access);
+        assert_eq!(
+            settings.http_proxy_url.as_deref(),
+            Some("http://127.0.0.1:7890")
+        );
         assert_eq!(settings.monitor_buffer_limit, 512);
         assert_eq!(settings.log_retention_days, 45);
         assert_eq!(settings.logs_dir, custom_logs.to_string_lossy());
@@ -3187,6 +3241,7 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
             &AppSettingsInput {
                 daemon_port: crate::onboarding::DEFAULT_PORT,
                 allow_lan_access: false,
+                http_proxy_url: None,
                 monitor_buffer_limit: 200,
                 log_retention_days: 30,
                 logs_dir: None,
