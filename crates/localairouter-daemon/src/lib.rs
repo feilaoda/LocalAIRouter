@@ -571,7 +571,7 @@ async fn proxy_request(
                 LocalAIRouterError::Validation(_) | LocalAIRouterError::Message(_) => {
                     StatusCode::BAD_REQUEST
                 }
-                _ => StatusCode::BAD_GATEWAY,
+                _ => StatusCode::SERVICE_UNAVAILABLE,
             };
             state.monitor.complete(
                 &monitor_id,
@@ -654,7 +654,7 @@ async fn proxy_request(
             let error_text = upstream_transport_error_text(&upstream_client, &error);
             state.monitor.complete(
                 &monitor_id,
-                Some(StatusCode::BAD_GATEWAY.as_u16()),
+                Some(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
                 start.elapsed().as_millis() as u64,
                 Some(error_text.clone()),
                 None,
@@ -668,7 +668,7 @@ async fn proxy_request(
                     account_id: Some(resolved.account.id.clone()),
                     method: method.to_string(),
                     path: request_path.clone(),
-                    status_code: Some(StatusCode::BAD_GATEWAY.as_u16()),
+                    status_code: Some(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
                     duration_ms: start.elapsed().as_millis() as u64,
                     error_text: Some(error_text.clone()),
                     request_headers: request_headers.clone(),
@@ -686,7 +686,7 @@ async fn proxy_request(
     };
 
     let status = StatusCode::from_u16(upstream_response.status().as_u16())
-        .unwrap_or(StatusCode::BAD_GATEWAY);
+        .unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
     let response_headers = sanitize_reqwest_headers(upstream_response.headers());
     let streamed = upstream_response
         .headers()
@@ -701,7 +701,7 @@ async fn proxy_request(
             .mark_response(&monitor_id, status.as_u16(), true);
         if converter_label.is_some() && converter::is_openai_responses_path(&client_upstream_path) {
             return Err(LocalAIRouterError::Validation(
-                "deepseek v4 converter currently buffers upstream streaming responses; the upstream request was sent as non-streaming".into(),
+                "responses-to-chat-completions converter currently buffers upstream streaming responses; the upstream request was sent as non-streaming".into(),
             ));
         }
         stream_response(
@@ -731,12 +731,33 @@ async fn proxy_request(
                 let error = map_http(error);
                 state.monitor.complete(
                     &monitor_id,
-                    Some(status.as_u16()),
+                    Some(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
                     start.elapsed().as_millis() as u64,
                     Some(error.to_string()),
                     None,
                     false,
                 );
+                let inserted_log = state
+                    .repository
+                    .insert_log(RequestLogInput {
+                        provider: resolved.provider.slug,
+                        model,
+                        account_id: Some(resolved.account.id),
+                        method: method.to_string(),
+                        path: request_path,
+                        status_code: Some(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
+                        duration_ms: start.elapsed().as_millis() as u64,
+                        error_text: Some(error.to_string()),
+                        request_headers,
+                        request_body: request_body_text,
+                        response_headers: sanitize_reqwest_headers(&upstream_headers),
+                        response_body: String::new(),
+                        streamed: false,
+                    })
+                    .await;
+                if let Ok(log) = inserted_log {
+                    state.monitor.attach_log(&monitor_id, log.id);
+                }
                 return Err(error);
             }
         };
@@ -821,12 +842,14 @@ fn prepare_account_conversion(
 ) -> Result<PreparedRequest> {
     match resolved.account.converter {
         AccountConverter::None => {
-            if should_auto_apply_deepseek_converter(resolved, upstream_path, &request_body) {
-                return prepare_deepseek_conversion(
+            if let Some(converter_label) =
+                auto_chat_completions_converter_label(resolved, upstream_path, &request_body)
+            {
+                return prepare_chat_completions_conversion(
                     response_store,
                     upstream_path,
                     request_body,
-                    "deepseek-v4-to-openai(auto)",
+                    converter_label,
                 );
             }
             let logged_body_text = String::from_utf8_lossy(&request_body).into_owned();
@@ -846,7 +869,7 @@ fn prepare_account_conversion(
                     "deepseek v4 converter can only be used with OpenAI protocol providers".into(),
                 ));
             }
-            prepare_deepseek_conversion(
+            prepare_chat_completions_conversion(
                 response_store,
                 upstream_path,
                 request_body,
@@ -856,7 +879,7 @@ fn prepare_account_conversion(
     }
 }
 
-fn prepare_deepseek_conversion(
+fn prepare_chat_completions_conversion(
     response_store: &converter::ResponseStore,
     upstream_path: &str,
     request_body: Bytes,
@@ -892,23 +915,29 @@ fn prepare_deepseek_conversion(
     }
 }
 
-fn should_auto_apply_deepseek_converter(
+fn auto_chat_completions_converter_label(
     resolved: &ResolvedAccount,
     upstream_path: &str,
     request_body: &[u8],
-) -> bool {
+) -> Option<&'static str> {
     if resolved.provider.protocol != ApiProtocol::OpenAi
         || !converter::is_openai_responses_path(upstream_path)
     {
-        return false;
+        return None;
+    }
+    let base_url = resolved.upstream_base_url.to_ascii_lowercase();
+    if base_url.contains("opencode.ai/zen/go") {
+        return Some("openai-chat-completions(auto)");
     }
     let model = extract_model(request_body)
         .or_else(|| resolved.account.default_model.clone())
         .or_else(|| resolved.provider.default_model.clone())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let base_url = resolved.upstream_base_url.to_ascii_lowercase();
-    model.starts_with("deepseek") || base_url.contains("deepseek")
+    if model.starts_with("deepseek") || base_url.contains("deepseek") {
+        return Some("deepseek-v4-to-openai(auto)");
+    }
+    None
 }
 
 fn prepend_log_diagnostics(
@@ -1238,7 +1267,7 @@ fn error_response(error: LocalAIRouterError) -> Response<ResponseBody> {
     let status = match &error {
         LocalAIRouterError::Validation(_) => StatusCode::BAD_REQUEST,
         LocalAIRouterError::NotFound(_) => StatusCode::NOT_FOUND,
-        LocalAIRouterError::Http(_) => StatusCode::BAD_GATEWAY,
+        LocalAIRouterError::Http(_) => StatusCode::SERVICE_UNAVAILABLE,
         LocalAIRouterError::Sqlite(_) | LocalAIRouterError::Io(_) => {
             StatusCode::INTERNAL_SERVER_ERROR
         }
@@ -1550,6 +1579,34 @@ mod tests {
     }
 
     #[test]
+    fn opencode_go_responses_request_auto_uses_chat_completions() {
+        let resolved =
+            resolved_account_with_base_url("https://opencode.ai/zen/go/v1", AccountConverter::None);
+        let store = crate::converter::ResponseStore::new();
+        let prepared = prepare_account_conversion(
+            &resolved,
+            &store,
+            "/responses",
+            Bytes::from_static(br#"{"model":"glm-5","input":"hello"}"#),
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&prepared.body).unwrap();
+
+        assert_eq!(prepared.client_upstream_path, "/responses");
+        assert_eq!(prepared.upstream_path, "/chat/completions");
+        assert_eq!(
+            format!("{}{}", resolved.upstream_base_url, prepared.upstream_path),
+            "https://opencode.ai/zen/go/v1/chat/completions"
+        );
+        assert_eq!(
+            prepared.converter_label.as_deref(),
+            Some("openai-chat-completions(auto)")
+        );
+        assert_eq!(body["model"].as_str(), Some("glm-5"));
+        assert!(body["messages"].is_array());
+    }
+
+    #[test]
     fn configured_deepseek_converter_uses_chat_completions_path() {
         let resolved = resolved_account(AccountConverter::DeepSeekV4ToOpenAi);
         let store = crate::converter::ResponseStore::new();
@@ -1569,6 +1626,13 @@ mod tests {
     }
 
     fn resolved_account(converter: AccountConverter) -> ResolvedAccount {
+        resolved_account_with_base_url("https://api.deepseek.com/v1", converter)
+    }
+
+    fn resolved_account_with_base_url(
+        upstream_base_url: &str,
+        converter: AccountConverter,
+    ) -> ResolvedAccount {
         ResolvedAccount {
             provider: ProviderDefinition {
                 slug: "codex".into(),
@@ -1588,7 +1652,7 @@ mod tests {
                 id: "acct_deepseek".into(),
                 provider: "codex".into(),
                 name: "DeepSeek".into(),
-                base_url: Some("https://api.deepseek.com/v1".into()),
+                base_url: Some(upstream_base_url.into()),
                 default_model: None,
                 converter,
                 use_http_proxy: false,
@@ -1600,7 +1664,7 @@ mod tests {
                 created_at: "2026-01-01T00:00:00Z".into(),
                 updated_at: "2026-01-01T00:00:00Z".into(),
             },
-            upstream_base_url: "https://api.deepseek.com/v1".into(),
+            upstream_base_url: upstream_base_url.into(),
             api_key: "sk-test".into(),
         }
     }

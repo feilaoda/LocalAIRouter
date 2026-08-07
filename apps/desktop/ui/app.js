@@ -6,6 +6,150 @@ const ONBOARDING_TARGETS = [
   { id: "claude-code", label: "Claude Code" },
   { id: "curl", label: "cURL / Manual" },
 ];
+const ACCOUNT_API_PRESET_PROVIDER = "__provider__";
+const ACCOUNT_API_PRESET_CUSTOM = "__custom__";
+const ACCOUNT_API_PRESETS = [
+  {
+    id: "openai",
+    label: "OpenAI",
+    url: "https://api.openai.com/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "opencode-go",
+    label: "OpenCode Go",
+    url: "https://opencode.ai/zen/go/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "deepseek-openai",
+    label: "DeepSeek",
+    url: "https://api.deepseek.com/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    url: "https://openrouter.ai/api/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "xai",
+    label: "xAI",
+    url: "https://api.x.ai/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "groq",
+    label: "Groq",
+    url: "https://api.groq.com/openai/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "mistral",
+    label: "Mistral AI",
+    url: "https://api.mistral.ai/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "together",
+    label: "Together AI",
+    url: "https://api.together.xyz/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "siliconflow",
+    label: "SiliconFlow",
+    url: "https://api.siliconflow.cn/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "moonshot",
+    label: "Moonshot AI",
+    url: "https://api.moonshot.cn/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "dashscope",
+    label: "Alibaba Cloud Model Studio",
+    url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "zhipu",
+    label: "Zhipu AI",
+    url: "https://open.bigmodel.cn/api/paas/v4",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "volcengine-ark",
+    label: "Volcengine Ark",
+    url: "https://ark.cn-beijing.volces.com/api/v3",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "gemini-openai",
+    label: "Google Gemini (OpenAI compatible)",
+    url: "https://generativelanguage.googleapis.com/v1beta/openai",
+    protocols: ["openai"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    url: "https://api.anthropic.com",
+    protocols: ["anthropic"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "deepseek-anthropic",
+    label: "DeepSeek (Anthropic compatible)",
+    url: "https://api.deepseek.com/anthropic",
+    protocols: ["anthropic"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "gemini-native",
+    label: "Google Gemini",
+    url: "https://generativelanguage.googleapis.com/v1beta",
+    protocols: ["generic"],
+    group: "Cloud APIs",
+  },
+  {
+    id: "ollama",
+    label: "Ollama",
+    url: "http://127.0.0.1:11434/v1",
+    protocols: ["openai"],
+    group: "Local runtimes",
+  },
+  {
+    id: "lm-studio",
+    label: "LM Studio",
+    url: "http://127.0.0.1:1234/v1",
+    protocols: ["openai"],
+    group: "Local runtimes",
+  },
+  {
+    id: "vllm",
+    label: "vLLM",
+    url: "http://127.0.0.1:8000/v1",
+    protocols: ["openai"],
+    group: "Local runtimes",
+  },
+];
 
 const ZH_MESSAGES = {
   Dashboard: "总览",
@@ -162,6 +306,16 @@ const ZH_MESSAGES = {
   "Copy API Key": "复制 API Key",
   "Stored API Key": "已存储的 API Key",
   "Base URL Override": "Base URL 覆盖",
+  "API Endpoint Preset": "API 地址预设",
+  "Use Provider Base URL": "使用 Provider 默认地址",
+  "Custom Base URL": "自定义 Base URL",
+  "Cloud APIs": "云端 API",
+  "Local runtimes": "本地运行时",
+  "Using provider Base URL: {url}": "使用 Provider Base URL：{url}",
+  "The selected API Base URL is filled automatically.":
+    "已自动填入所选 API 的 Base URL。",
+  "Enter an API Base URL that is not listed above.":
+    "填写上方列表中未提供的 API Base URL。",
   "Optional. Defaults to the provider base URL":
     "可选，默认使用 Provider 的 Base URL",
   "Default Model": "默认模型",
@@ -359,6 +513,15 @@ const ZH_MESSAGES = {
   updated: "updated",
   request: "request",
   response: "response",
+  "View Log": "查看日志",
+  "Log Content": "日志内容",
+  "Close log content dialog": "关闭日志内容对话框",
+  "Inspect the persisted request and response body without using the clipboard.":
+    "直接查看已持久化的请求和响应内容，不依赖剪贴板。",
+  "Request Headers": "请求 Headers",
+  "Request Body": "请求 Body",
+  "Response Headers": "响应 Headers",
+  "Response Body": "响应 Body",
   "No request body preview.": "没有请求体预览。",
   "Resolving provider route and active account.":
     "正在解析 Provider 路由和当前账号。",
@@ -592,6 +755,7 @@ const state = {
   accountEditor: null,
   routeEditor: null,
   openMetricTooltip: null,
+  logContentDetail: null,
   settingsDirty: false,
   rebuildingTokenStats: false,
   tokenRebuildStatus: "",
@@ -683,6 +847,9 @@ const elements = {
   accountName: document.querySelector("#account-name"),
   accountApiKey: document.querySelector("#account-api-key"),
   accountKeyToggleView: document.querySelector("#account-key-toggle-view"),
+  accountApiPreset: document.querySelector("#account-api-preset"),
+  accountApiPresetHint: document.querySelector("#account-api-preset-hint"),
+  accountBaseUrlField: document.querySelector("#account-base-url-field"),
   accountBaseUrl: document.querySelector("#account-base-url"),
   accountDefaultModel: document.querySelector("#account-default-model"),
   accountUseHttpProxy: document.querySelector("#account-use-http-proxy"),
@@ -718,6 +885,16 @@ const elements = {
   monitorList: document.querySelector("#monitor-list"),
   refreshMonitor: document.querySelector("#refresh-monitor"),
   openLogsRoot: document.querySelector("#open-logs-root"),
+  logContentDialog: document.querySelector("#log-content-dialog"),
+  closeLogContentDialog: document.querySelector("#close-log-content-dialog"),
+  logContentTitle: document.querySelector("#log-content-title"),
+  logContentCopy: document.querySelector("#log-content-copy"),
+  logContentMeta: document.querySelector("#log-content-meta"),
+  logContentRequestHeaders: document.querySelector("#log-content-request-headers"),
+  logContentRequestBody: document.querySelector("#log-content-request-body"),
+  logContentResponseHeaders: document.querySelector("#log-content-response-headers"),
+  logContentResponseBody: document.querySelector("#log-content-response-body"),
+  logContentCopyFull: document.querySelector("#log-content-copy-full"),
   skillSearchInput: document.querySelector("#skill-search"),
   skillsSourceTabs: document.querySelector("#skills-source-tabs"),
   skillsList: document.querySelector("#skills-list"),
@@ -886,6 +1063,9 @@ function applyLocale(rerender) {
   renderOnboarding();
   renderSettings();
   renderProviderPathDemo();
+  if (elements.accountDialog.open) {
+    syncAccountApiPresetOptions(elements.accountBaseUrl.value);
+  }
 }
 
 function hasDesktopIntegration() {
@@ -1034,9 +1214,15 @@ function bindEvents() {
       closeConfirmDialog();
     }
   });
+  elements.logContentDialog.addEventListener("click", (event) => {
+    if (event.target === elements.logContentDialog) {
+      closeLogContentDialog();
+    }
+  });
   elements.confirmDialog.addEventListener("close", () => {
     pendingConfirmation = null;
   });
+  elements.logContentDialog.addEventListener("close", resetLogContentDialog);
   elements.providerDialog.addEventListener("close", resetProviderForm);
   elements.accountDialog.addEventListener("close", resetAccountForm);
   elements.routeDialog.addEventListener("close", resetRouteForm);
@@ -1053,6 +1239,21 @@ function bindEvents() {
   elements.closeSkillGitDialog?.addEventListener("click", closeSkillGitDialog);
   elements.skillGitCancel?.addEventListener("click", closeSkillGitDialog);
   elements.closeConfirmDialog.addEventListener("click", closeConfirmDialog);
+  elements.closeLogContentDialog.addEventListener("click", closeLogContentDialog);
+  elements.logContentCopyFull.addEventListener("click", async () => {
+    const detail = state.logContentDetail;
+    if (!detail?.log) {
+      return;
+    }
+    await copyText(
+      buildFullLogClipboardText(
+        detail.log,
+        detail.providerName,
+        detail.accountName,
+      ),
+      t("Full interaction log copied."),
+    );
+  });
   elements.confirmCancel.addEventListener("click", closeConfirmDialog);
   elements.confirmForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1398,7 +1599,12 @@ function bindEvents() {
     resetAccountForm();
     openDialog(elements.accountDialog, elements.accountName);
   });
-  elements.accountProvider.addEventListener("change", () => {});
+  elements.accountProvider.addEventListener("change", () => {
+    syncAccountApiPresetOptions("");
+  });
+  elements.accountApiPreset.addEventListener("change", () => {
+    applyAccountApiPresetSelection();
+  });
 
   if (elements.accountKeyToggleView) {
     elements.accountKeyToggleView.addEventListener("click", () => {
@@ -2600,6 +2806,7 @@ function renderMonitor() {
     const providerName = provider ? provider.displayName : entry.provider;
     const accountName = account?.name || entry.accountId || t("routing");
     const monitorCopyLabel = t("Copy Full Log");
+    const monitorViewLabel = t("View Log");
     const monitorCopyTitle = entry.logId
       ? t("Copy Full Log")
       : t(
@@ -2617,6 +2824,7 @@ function renderMonitor() {
           <span class="pill ${monitorPhaseTone(entry)}">${escapeHtml(monitorPhaseLabel(entry))}</span>
           <span class="pill ${monitorStatusTone(entry)}">${escapeHtml(monitorStatusLabel(entry))}</span>
           <button type="button" class="ghost monitor-copy-button" title="${escapeHtml(monitorCopyTitle)}">${escapeHtml(monitorCopyLabel)}</button>
+          <button type="button" class="ghost monitor-view-button" title="${escapeHtml(monitorCopyTitle)}">${escapeHtml(monitorViewLabel)}</button>
         </div>
       </div>
       <div class="data-meta">
@@ -2642,6 +2850,10 @@ function renderMonitor() {
     const copyButton = item.querySelector(".monitor-copy-button");
     copyButton.addEventListener("click", async () => {
       await copyMonitorEntry(entry, providerName, accountName);
+    });
+    const viewButton = item.querySelector(".monitor-view-button");
+    viewButton.addEventListener("click", async () => {
+      await viewMonitorEntry(entry, providerName, accountName);
     });
     return item;
   });
@@ -3835,6 +4047,7 @@ function resetAccountForm() {
   } else {
     elements.accountProvider.value = "";
   }
+  syncAccountApiPresetOptions("");
 }
 
 function fillAccountForm(account) {
@@ -3858,10 +4071,104 @@ function fillAccountForm(account) {
   elements.accountApiKey.value = account.apiKey || "";
   setAccountApiKeyVisible(false);
   elements.accountBaseUrl.value = account.baseUrl || "";
+  syncAccountApiPresetOptions(account.baseUrl || "");
   elements.accountDefaultModel.value = account.defaultModel || "";
   elements.accountUseHttpProxy.checked = Boolean(account.useHttpProxy);
   elements.accountNote.value = account.note || "";
   elements.accountEnabled.checked = account.enabled;
+}
+
+function syncAccountApiPresetOptions(baseUrl = elements.accountBaseUrl.value) {
+  const provider = getProvider(elements.accountProvider.value);
+  const protocol = provider?.protocol;
+  const presets = ACCOUNT_API_PRESETS.filter((preset) =>
+    preset.protocols.includes(protocol),
+  );
+  const normalizedBaseUrl = normalizeBaseUrlForPreset(baseUrl);
+  const matchingPreset = presets.find(
+    (preset) => normalizeBaseUrlForPreset(preset.url) === normalizedBaseUrl,
+  );
+  const selection = !normalizedBaseUrl
+    ? ACCOUNT_API_PRESET_PROVIDER
+    : matchingPreset?.id || ACCOUNT_API_PRESET_CUSTOM;
+
+  const nodes = [
+    optionNode(ACCOUNT_API_PRESET_PROVIDER, t("Use Provider Base URL")),
+  ];
+  const groups = new Map();
+  presets.forEach((preset) => {
+    if (!groups.has(preset.group)) {
+      groups.set(preset.group, []);
+    }
+    groups.get(preset.group).push(preset);
+  });
+  groups.forEach((groupPresets, groupLabel) => {
+    const group = document.createElement("optgroup");
+    group.label = t(groupLabel);
+    group.append(
+      ...groupPresets.map((preset) => optionNode(preset.id, preset.label)),
+    );
+    nodes.push(group);
+  });
+  nodes.push(optionNode(ACCOUNT_API_PRESET_CUSTOM, t("Custom Base URL")));
+
+  elements.accountApiPreset.replaceChildren(...nodes);
+  elements.accountApiPreset.value = selection;
+  elements.accountBaseUrl.value = baseUrl || "";
+  applyAccountApiPresetSelection({ preserveCustomValue: true });
+}
+
+function applyAccountApiPresetSelection({ preserveCustomValue = false } = {}) {
+  const presetId = elements.accountApiPreset.value;
+  const provider = getProvider(elements.accountProvider.value);
+  const preset = ACCOUNT_API_PRESETS.find(
+    (candidate) => candidate.id === presetId,
+  );
+
+  if (presetId === ACCOUNT_API_PRESET_PROVIDER) {
+    elements.accountBaseUrl.value = "";
+    elements.accountBaseUrl.readOnly = true;
+    elements.accountBaseUrlField.hidden = true;
+    elements.accountApiPresetHint.textContent = provider?.baseUrl
+      ? t("Using provider Base URL: {url}", { url: provider.baseUrl })
+      : t("Optional. Defaults to the provider base URL");
+  } else if (presetId === ACCOUNT_API_PRESET_CUSTOM) {
+    if (
+      !preserveCustomValue &&
+      elements.accountBaseUrl.dataset.presetId &&
+      elements.accountBaseUrl.dataset.presetId !== ACCOUNT_API_PRESET_CUSTOM
+    ) {
+      elements.accountBaseUrl.value = "";
+    }
+    elements.accountBaseUrl.readOnly = false;
+    elements.accountBaseUrlField.hidden = false;
+    elements.accountBaseUrl.placeholder = t(
+      "Optional. Defaults to the provider base URL",
+    );
+    elements.accountApiPresetHint.textContent = t(
+      "Enter an API Base URL that is not listed above.",
+    );
+  } else if (preset) {
+    elements.accountBaseUrl.value = preset.url;
+    elements.accountBaseUrl.readOnly = true;
+    elements.accountBaseUrlField.hidden = false;
+    elements.accountApiPresetHint.textContent = t(
+      "The selected API Base URL is filled automatically.",
+    );
+  }
+
+  elements.accountBaseUrl.classList.toggle(
+    "preset-readonly",
+    elements.accountBaseUrl.readOnly,
+  );
+  elements.accountBaseUrl.dataset.presetId = presetId;
+}
+
+function normalizeBaseUrlForPreset(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
 }
 
 function toggleAccountApiKeyVisibility() {
@@ -4239,6 +4546,23 @@ function closeSkillGitDialog() {
 function closeConfirmDialog() {
   pendingConfirmation = null;
   closeDialog(elements.confirmDialog);
+}
+
+function closeLogContentDialog() {
+  closeDialog(elements.logContentDialog);
+}
+
+function resetLogContentDialog() {
+  state.logContentDetail = null;
+  elements.logContentTitle.textContent = t("Log Content");
+  elements.logContentCopy.textContent = t(
+    "Inspect the persisted request and response body without using the clipboard.",
+  );
+  elements.logContentMeta.replaceChildren();
+  elements.logContentRequestHeaders.textContent = "(empty)";
+  elements.logContentRequestBody.textContent = "(empty)";
+  elements.logContentResponseHeaders.textContent = "(empty)";
+  elements.logContentResponseBody.textContent = "(empty)";
 }
 
 function openDialog(dialog, focusTarget) {
@@ -4666,6 +4990,26 @@ function copyTextWithTextarea(text) {
 }
 
 async function copyMonitorEntry(entry, providerName, accountName) {
+  const log = await loadMonitorEntryLog(entry);
+  if (!log) {
+    return;
+  }
+  await copyText(
+    buildFullLogClipboardText(log, providerName, accountName),
+    t("Full interaction log copied."),
+  );
+}
+
+async function viewMonitorEntry(entry, providerName, accountName) {
+  const log = await loadMonitorEntryLog(entry);
+  if (!log) {
+    return;
+  }
+  renderLogContentDialog(log, providerName, accountName);
+  openDialog(elements.logContentDialog, elements.logContentCopyFull);
+}
+
+async function loadMonitorEntryLog(entry) {
   let logId = entry.logId;
   if (!logId && ["completed", "failed"].includes(entry.phase)) {
     await refreshMonitor(true);
@@ -4680,13 +5024,61 @@ async function copyMonitorEntry(entry, providerName, accountName) {
     );
     return;
   }
-  const log = await perform(() => fetchLog(logId, false));
-  if (!log) {
-    return;
-  }
-  await copyText(
-    buildFullLogClipboardText(log, providerName, accountName),
-    t("Full interaction log copied."),
+  return perform(() => fetchLog(logId, false));
+}
+
+function renderLogContentDialog(log, fallbackProviderName, fallbackAccountName) {
+  const provider = getProvider(log.provider);
+  const account = state.accounts.find(
+    (candidate) => candidate.id === log.accountId,
+  );
+  const providerName =
+    provider?.displayName || fallbackProviderName || log.provider;
+  const accountName =
+    account?.name || log.accountId || fallbackAccountName || t("No account");
+  const statusLabel = log.statusCode ?? "error";
+  const title = `${log.method} ${log.path}`;
+  const meta = [
+    ["id", log.id],
+    [t("provider"), providerName],
+    [t("account"), accountName],
+    [t("model"), log.model || t("model unavailable")],
+    [t("status"), statusLabel],
+    [t("duration"), formatLatency(log.durationMs)],
+    [t("mode"), log.streamed ? t("streamed") : t("sync")],
+    ["tokens", formatTokenCount(log.totalTokens)],
+    ["session", log.sessionId],
+    ["file", log.logFilePath],
+    ["time", formatDateTime(log.createdAt)],
+  ].filter(([, value]) => value !== null && value !== undefined && value !== "");
+
+  state.logContentDetail = {
+    log,
+    providerName,
+    accountName,
+  };
+  elements.logContentTitle.textContent = title;
+  elements.logContentCopy.textContent = log.errorText
+    ? log.errorText
+    : t("Inspect the persisted request and response body without using the clipboard.");
+  elements.logContentMeta.replaceChildren(
+    ...meta.map(([label, value]) => {
+      const item = document.createElement("span");
+      item.className = "pill";
+      item.title = String(value);
+      item.textContent = `${label}: ${formatMetadataValue(value)}`;
+      return item;
+    }),
+  );
+  elements.logContentRequestHeaders.textContent = formatLogPayload(
+    log.requestHeaders,
+  );
+  elements.logContentRequestBody.textContent = formatLogPayload(log.requestBody);
+  elements.logContentResponseHeaders.textContent = formatLogPayload(
+    log.responseHeaders,
+  );
+  elements.logContentResponseBody.textContent = formatLogPayload(
+    log.responseBody,
   );
 }
 

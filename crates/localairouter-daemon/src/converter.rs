@@ -1019,35 +1019,64 @@ fn chat_completion_to_response(cc: JsonValue, original_request: Option<&JsonValu
 
     if let Some(choice) = choice {
         let message = choice.get("message").unwrap_or(&JsonValue::Null);
-        if let Some(tool_calls) = message.get("tool_calls").and_then(JsonValue::as_array) {
-            for tool_call in tool_calls {
-                output.push(json!({
-                    "type": "function_call",
-                    "id": format!("fc_{}", Uuid::new_v4().simple()),
-                    "call_id": tool_call
-                        .get("id")
-                        .and_then(JsonValue::as_str)
-                        .unwrap_or("call_unknown"),
-                    "name": tool_call
-                        .get("function")
-                        .and_then(|value| value.get("name"))
-                        .and_then(JsonValue::as_str)
-                        .unwrap_or_default(),
-                    "arguments": tool_call
-                        .get("function")
-                        .and_then(|value| value.get("arguments"))
-                        .and_then(JsonValue::as_str)
-                        .unwrap_or("{}"),
-                    "status": "completed",
-                }));
+        let has_json_tool_calls = message
+            .get("tool_calls")
+            .and_then(JsonValue::as_array)
+            .map(|calls| !calls.is_empty())
+            .unwrap_or(false);
+
+        let raw_content = message
+            .get("content")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("");
+        // Normalize DSML variants to standard ASCII-pipe format:
+        // 1. Double pipes (||) -> single pipe (|)
+        // 2. Fullwidth vertical line (U+FF5C) -> single pipe (|)
+        // 3. Plain XML tool_calls wrapper -> pipe-delimited format
+        let mut normalized = raw_content
+            .replace("||", "|")
+            .replace('｜', "|")
+            .replace("<tool_calls>", "<|tool_calls|>")
+            .replace("</tool_calls>", "</|tool_calls|>");
+        // 4. Bare invoke blocks (no opening <|tool_calls|> tag) -> add synthetic wrapper
+        if !normalized.contains("<|tool_calls|>")
+            && (normalized.contains("<|DSML|invoke") || normalized.contains("<|invoke"))
+        {
+            let close = if normalized.contains("</|tool_calls|>") { "" } else { "</|tool_calls|>" };
+            normalized = format!("<|tool_calls|>{}{}", normalized, close);
+        }
+        let (after_dsml_text, dsml_function_calls) = parse_dsml_tool_calls(&normalized);
+        for fc in dsml_function_calls {
+            output.push(fc);
+        }
+
+        if has_json_tool_calls {
+            if let Some(tool_calls) = message.get("tool_calls").and_then(JsonValue::as_array) {
+                for tool_call in tool_calls {
+                    output.push(json!({
+                        "type": "function_call",
+                        "id": format!("fc_{}", Uuid::new_v4().simple()),
+                        "call_id": tool_call
+                            .get("id")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("call_unknown"),
+                        "name": tool_call
+                            .get("function")
+                            .and_then(|value| value.get("name"))
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or_default(),
+                        "arguments": tool_call
+                            .get("function")
+                            .and_then(|value| value.get("arguments"))
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("{}"),
+                        "status": "completed",
+                    }));
+                }
             }
         }
 
-        let text = message
-            .get("content")
-            .and_then(JsonValue::as_str)
-            .map(strip_think_blocks)
-            .unwrap_or_default();
+        let text = strip_think_blocks(&after_dsml_text);
         if !text.trim().is_empty() {
             output.push(json!({
                 "type": "message",
@@ -1196,6 +1225,153 @@ fn strip_think_blocks(text: &str) -> String {
     }
     output.push_str(remaining);
     output
+}
+
+/// Parse DSML-formatted tool calls from assistant text content.
+/// Returns (remaining_text_without_dsml, parsed_function_calls).
+fn parse_dsml_tool_calls(text: &str) -> (String, Vec<JsonValue>) {
+    let opening = if let Some(pos) = text.find("<|DSML|tool_calls>") {
+        (pos, "<|DSML|tool_calls>")
+    } else if let Some(pos) = text.find("<|tool_calls|>") {
+        (pos, "<|tool_calls|>")
+    } else {
+        return (text.to_owned(), Vec::new());
+    };
+    let (tool_calls_start, open_tag) = opening;
+    let close_tag = if open_tag == "<|DSML|tool_calls>" {
+        "</|DSML|tool_calls>"
+    } else {
+        "</|tool_calls|>"
+    };
+
+    let prefix = &text[..tool_calls_start];
+    let dsml_block = &text[tool_calls_start + open_tag.len()..];
+    let end_pos = match dsml_block.find(close_tag) {
+        Some(pos) => pos,
+        None => {
+            let cleaned = format!("{}{}", prefix, dsml_block);
+            return (cleaned, Vec::new());
+        }
+    };
+    let suffix = &dsml_block[end_pos + close_tag.len()..];
+    let body = &dsml_block[..end_pos];
+    let cleaned = format!("{prefix}{suffix}");
+
+    let mut tool_calls = Vec::new();
+    let mut rest = body;
+    while let Some(invoke_start) = rest.find("<|DSML|invoke")
+        .or_else(|| rest.find("<|invoke"))
+    {
+        let invoke_body = &rest[invoke_start..];
+        let invoke_end = match invoke_body.find("</|DSML|invoke>")
+            .or_else(|| invoke_body.find("</|invoke>"))
+        {
+            Some(pos) => {
+                let end_tag = if invoke_body[pos..].starts_with("</|DSML|invoke>") {
+                    "</|DSML|invoke>"
+                } else {
+                    "</|invoke>"
+                };
+                pos + end_tag.len()
+            }
+            None => break,
+        };
+        let invoke_chunk = &invoke_body[..invoke_end];
+
+        let name = extract_dsml_attr(invoke_chunk, "name");
+        // Remap common DeepSeek tool name hallucinations to Codex tool names
+        let name = match name {
+            Some("bash") => Some("exec_command"),
+            other => other,
+        };
+        let params = parse_dsml_params(&invoke_chunk);
+
+        let arguments = dsml_params_to_json(&params);
+        tool_calls.push(json!({
+            "type": "function_call",
+            "id": format!("fc_{}", Uuid::new_v4().simple()),
+            "call_id": format!("call_{}", Uuid::new_v4().simple()),
+            "name": name.unwrap_or("unknown"),
+            "arguments": arguments,
+            "status": "completed",
+        }));
+
+        rest = &invoke_body[invoke_end..];
+    }
+
+    (cleaned.trim().to_owned(), tool_calls)
+}
+
+fn extract_dsml_attr<'a>(invoke_chunk: &'a str, attr: &str) -> Option<&'a str> {
+    let pattern = format!("{attr}=\"");
+    let start = invoke_chunk.find(&pattern)? + pattern.len();
+    let remaining = &invoke_chunk[start..];
+    let end = remaining.find('"')?;
+    Some(&remaining[..end])
+}
+
+fn parse_dsml_params(invoke_chunk: &str) -> Vec<(String, String)> {
+    let mut params = Vec::new();
+    let mut rest = invoke_chunk;
+    while let Some(param_start) = rest.find("<|DSML|parameter")
+        .or_else(|| rest.find("<|parameter"))
+    {
+        let tag_len = if rest[param_start..].starts_with("<|DSML|parameter") {
+            "<|DSML|parameter".len()
+        } else {
+            "<|parameter".len()
+        };
+        rest = &rest[param_start + tag_len..];
+        let name = extract_dsml_attr(rest, "name").unwrap_or("").to_owned();
+        let is_string = extract_dsml_attr(rest, "string").unwrap_or("true") == "true";
+        let value = if let Some(close_pos) = rest.find('>') {
+            let after_gt = &rest[close_pos + 1..];
+            let end_tag = if after_gt.contains("</|DSML|parameter>") {
+                "</|DSML|parameter>"
+            } else {
+                "</|parameter>"
+            };
+            if let Some(val_end) = after_gt.find(end_tag) {
+                let raw = &after_gt[..val_end];
+                rest = &after_gt[val_end + end_tag.len()..];
+                if is_string { raw.trim().to_owned() } else { raw.trim().to_owned() }
+            } else {
+                break;
+            }
+        } else {
+            break;
+        };
+        if !name.is_empty() {
+            params.push((name, value));
+        }
+    }
+    params
+}
+
+fn dsml_params_to_json(params: &[(String, String)]) -> String {
+    let mut obj = serde_json::Map::new();
+    for (key, value) in params {
+        let json_value = if value == "true" {
+            JsonValue::Bool(true)
+        } else if value == "false" {
+            JsonValue::Bool(false)
+        } else if let Ok(number) = value.parse::<i64>() {
+            JsonValue::Number(number.into())
+        } else if let Ok(number) = value.parse::<f64>() {
+            if let Some(json_num) = serde_json::Number::from_f64(number) {
+                JsonValue::Number(json_num)
+            } else {
+                JsonValue::String(value.clone())
+            }
+        } else if value.starts_with('{') || value.starts_with('[') {
+            serde_json::from_str::<JsonValue>(value)
+                .unwrap_or_else(|_| JsonValue::String(value.clone()))
+        } else {
+            JsonValue::String(value.clone())
+        };
+        obj.insert(key.clone(), json_value);
+    }
+    serde_json::to_string(&JsonValue::Object(obj)).unwrap_or_else(|_| "{}".into())
 }
 
 fn copy_number(source: &Map<String, JsonValue>, target: &mut Map<String, JsonValue>, key: &str) {

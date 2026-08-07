@@ -2604,6 +2604,8 @@ fn write_clipboard_text_native(_text: &str) -> Result<()> {
 fn write_to_clipboard_command(program: &str, args: &[&str], text: &str) -> Result<()> {
     let mut child = Command::new(program)
         .args(args)
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_CTYPE", "en_US.UTF-8")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -1091,6 +1091,10 @@ dd {
   gap: 6px;
 }
 
+.field[hidden] {
+  display: none;
+}
+
 .field-action-row {
   display: flex;
   align-items: center;
@@ -1141,6 +1145,12 @@ button:focus {
   outline: 2px solid transparent;
   border-color: rgba(0, 95, 184, 0.34);
   box-shadow: 0 0 0 3px rgba(0, 95, 184, 0.12);
+}
+
+input.preset-readonly {
+  color: var(--muted);
+  background: rgba(240, 242, 244, 0.9);
+  cursor: default;
 }
 
 textarea {
@@ -1700,6 +1710,12 @@ button:disabled {
   line-height: 1;
 }
 
+.monitor-view-button {
+  padding: 4px 8px;
+  font-size: 0.66rem;
+  line-height: 1;
+}
+
 .monitor-preview-stack {
   display: grid;
   gap: 3px;
@@ -1747,6 +1763,45 @@ button:disabled {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 14px;
+}
+
+.log-content-dialog {
+  width: min(920px, calc(100vw - 24px));
+}
+
+.log-content-dialog .dialog-card {
+  display: grid;
+  gap: 10px;
+  max-height: min(900px, calc(100vh - 28px));
+}
+
+.log-content-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.log-content-dialog .log-detail-stack {
+  gap: 10px;
+}
+
+.log-content-dialog .log-detail-card {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.log-content-dialog .log-detail-head h3 {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.log-content-dialog .log-detail-card pre {
+  max-height: 240px;
+  min-height: 84px;
+  padding: 10px;
+  font-size: 0.72rem;
 }
 
 .log-detail-stack {
